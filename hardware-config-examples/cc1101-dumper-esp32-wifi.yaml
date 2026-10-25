@@ -3,6 +3,7 @@
 # Version: see substitutions.version below, also shown in the boot log
 #
 # Changelog
+#   1.1.1  2026-10-25  No reboot without an API client, no timing warnings during setup
 #   1.1.0  2026-10-25  Oregon v2.1 decoder with runtime timing and bit pair check
 #   1.0.1  2026-10-25  Raw log is off by default
 #   1.0.0  2026-10-25  First versioned release, WiFi variant of the WT32-ETH01 example
@@ -20,7 +21,7 @@
 substitutions:
   name: cc1101-dumper-wifi
   friendly_name: CC1101 Dumper WiFi
-  version: "1.1.0"
+  version: "1.1.1"
 
 esphome:
   name: ${name}
@@ -49,6 +50,8 @@ logger:
   level: DEBUG
 
 api:
+  # The device is not added to Home Assistant, so never reboot for lack of an API client
+  reboot_timeout: 0s
 
 ota:
   - platform: esphome
@@ -325,6 +328,10 @@ script:
     mode: queued
     then:
       - lambda: |-
+          // During setup the numbers publish one by one; wait until all have a value
+          if (std::isnan(id(ore_min_pulse).state) || std::isnan(id(ore_long_pulse).state) ||
+              std::isnan(id(ore_max_pulse).state) || std::isnan(id(ore_end_gap).state) ||
+              std::isnan(id(ore_min_preamble).state)) return;
           oregon_v21_receiver::ManchesterDecoder::Timing t;
           t.min_pulse_us = (uint32_t) id(ore_min_pulse).state;
           t.long_pulse_us = (uint32_t) id(ore_long_pulse).state;
