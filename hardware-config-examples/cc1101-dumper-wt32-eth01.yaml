@@ -3,6 +3,7 @@
 # Version: see substitutions.version below, also shown in the boot log
 #
 # Changelog
+#   1.1.0  2026-10-25  Oregon v2.1 decoder with runtime timing and bit pair check
 #   1.0.1  2026-10-25  Raw log is off by default
 #   1.0.0  2026-10-25  First versioned release: raw frame log with uptime and gap,
 #                      runtime CC1101 tuning, RX filter and tolerance, web UI groups,
@@ -21,7 +22,7 @@
 substitutions:
   name: cc1101-dumper
   friendly_name: CC1101 Dumper
-  version: "1.0.1"
+  version: "1.1.0"
 
 esphome:
   name: ${name}
@@ -35,6 +36,7 @@ esphome:
       # Apply the stored radio and receiver settings after a restart
       - script.execute: apply_rf
       - script.execute: apply_rx
+      - script.execute: apply_oregon
 
 esp32:
   board: wt32-eth01
@@ -71,10 +73,9 @@ web_server:
     - id: grp_dump
       name: "Dump"
       sorting_weight: 20
-    # Added when the decoder is built
-    # - id: grp_decoder
-    #   name: "Decoder"
-    #   sorting_weight: 30
+    - id: grp_decoder
+      name: "Oregon v2.1 decoder"
+      sorting_weight: 30
 
 spi:
   clk_pin: GPIO14  # (IO14)
@@ -126,6 +127,16 @@ remote_receiver:
               line.clear();
             }
           }
+
+external_components:
+  - source: github://boilerplate4u/oregon_v21_receiver@main
+    components: [oregon_v21_receiver]
+
+# Oregon Scientific v2.1 decoder, prints every decoded message in the log
+# No devices are configured, so no sensors are created
+oregon_v21_receiver:
+  id: oregon
+  receiver_id: rx
 
 number:
   - platform: template
@@ -186,6 +197,108 @@ number:
     on_value:
       - script.execute: apply_rx
 
+  # Oregon v2.1 decoder timing, applied together by apply_oregon
+  # Defaults match the decoder, except Min preamble (20 instead of 24, see README)
+  - platform: template
+    id: ore_min_pulse
+    internal: true
+    web_server:
+      sorting_group_id: grp_decoder
+      sorting_weight: 20
+    name: "Min pulse"
+    icon: mdi:arrow-collapse-left
+    unit_of_measurement: us
+    optimistic: true
+    restore_value: true
+    initial_value: 200
+    min_value: 100
+    max_value: 400
+    step: 10
+    mode: box
+    entity_category: config
+    on_value:
+      - script.execute: apply_oregon
+
+  - platform: template
+    id: ore_long_pulse
+    internal: true
+    web_server:
+      sorting_group_id: grp_decoder
+      sorting_weight: 30
+    name: "Long pulse from"
+    icon: mdi:arrow-split-vertical
+    unit_of_measurement: us
+    optimistic: true
+    restore_value: true
+    initial_value: 700
+    min_value: 500
+    max_value: 900
+    step: 10
+    mode: box
+    entity_category: config
+    on_value:
+      - script.execute: apply_oregon
+
+  - platform: template
+    id: ore_max_pulse
+    internal: true
+    web_server:
+      sorting_group_id: grp_decoder
+      sorting_weight: 40
+    name: "Max pulse"
+    icon: mdi:arrow-collapse-right
+    unit_of_measurement: us
+    optimistic: true
+    restore_value: true
+    initial_value: 1200
+    min_value: 1000
+    max_value: 2000
+    step: 10
+    mode: box
+    entity_category: config
+    on_value:
+      - script.execute: apply_oregon
+
+  - platform: template
+    id: ore_end_gap
+    internal: true
+    web_server:
+      sorting_group_id: grp_decoder
+      sorting_weight: 50
+    name: "End gap"
+    icon: mdi:timer-sand
+    unit_of_measurement: us
+    optimistic: true
+    restore_value: true
+    initial_value: 2500
+    min_value: 1500
+    max_value: 5000
+    step: 100
+    mode: box
+    entity_category: config
+    on_value:
+      - script.execute: apply_oregon
+
+  - platform: template
+    id: ore_min_preamble
+    internal: true
+    web_server:
+      sorting_group_id: grp_decoder
+      sorting_weight: 60
+    name: "Min preamble"
+    icon: mdi:ray-start-arrow
+    unit_of_measurement: pulses
+    optimistic: true
+    restore_value: true
+    initial_value: 20
+    min_value: 8
+    max_value: 64
+    step: 1
+    mode: box
+    entity_category: config
+    on_value:
+      - script.execute: apply_oregon
+
 switch:
   - platform: template
     id: raw_log
@@ -199,7 +312,42 @@ switch:
     restore_mode: RESTORE_DEFAULT_OFF
     entity_category: config
 
+  - platform: template
+    id: ore_verify_bit_pairs
+    internal: true
+    web_server:
+      sorting_group_id: grp_decoder
+      sorting_weight: 10
+    name: "Verify bit pairs"
+    icon: mdi:check-decagram-outline
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    entity_category: config
+    turn_on_action:
+      - lambda: id(oregon).set_verify_bit_pairs(true);
+    turn_off_action:
+      - lambda: id(oregon).set_verify_bit_pairs(false);
+
 script:
+  - id: apply_oregon
+    mode: queued
+    then:
+      - lambda: |-
+          oregon_v21_receiver::ManchesterDecoder::Timing t;
+          t.min_pulse_us = (uint32_t) id(ore_min_pulse).state;
+          t.long_pulse_us = (uint32_t) id(ore_long_pulse).state;
+          t.max_pulse_us = (uint32_t) id(ore_max_pulse).state;
+          t.end_gap_us = (uint32_t) id(ore_end_gap).state;
+          t.min_preamble = (uint8_t) id(ore_min_preamble).state;
+          // Same rule as the decoder's own config validation
+          if (!(t.min_pulse_us < t.long_pulse_us && t.long_pulse_us < t.max_pulse_us &&
+                t.max_pulse_us < t.end_gap_us)) {
+            ESP_LOGW("oregon", "Timing ignored, must satisfy min < long < max < end gap");
+            return;
+          }
+          id(oregon).set_timing(t);
+          id(oregon).set_verify_bit_pairs(id(ore_verify_bit_pairs).state);
+
   - id: apply_rx
     mode: queued
     then:
