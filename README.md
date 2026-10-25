@@ -52,7 +52,7 @@ Requires ESPHome 2026.10.0 or later (tested with 2026.10.0).
 
 | Setting | Default | Effect |
 | --- | --- | --- |
-| Raw log | On | Turns the raw frame log on and off |
+| Raw log | Off | Turns the raw frame log on and off |
 | Min pulses per frame | 60 | Shorter frames are not logged |
 | RX filter | 100 µs | Pulses shorter than this are dropped; keep below the shortest pulse of your devices |
 | RX tolerance | 35 % | Timing tolerance for the built-in ESPHome decoders |

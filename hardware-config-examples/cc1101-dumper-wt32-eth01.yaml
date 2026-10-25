@@ -3,6 +3,7 @@
 # Version: see substitutions.version below, also shown in the boot log
 #
 # Changelog
+#   1.0.1  2026-10-25  Raw log is off by default
 #   1.0.0  2026-10-25  First versioned release: raw frame log with uptime and gap,
 #                      runtime CC1101 tuning, RX filter and tolerance, web UI groups,
 #                      all entities internal (web UI only, never exposed to Home Assistant)
@@ -20,7 +21,7 @@
 substitutions:
   name: cc1101-dumper
   friendly_name: CC1101 Dumper
-  version: "1.0.0"
+  version: "1.0.1"
 
 esphome:
   name: ${name}
@@ -195,7 +196,7 @@ switch:
     name: "Raw log"
     icon: mdi:text-box-outline
     optimistic: true
-    restore_mode: RESTORE_DEFAULT_ON
+    restore_mode: RESTORE_DEFAULT_OFF
     entity_category: config
 
 script:
