@@ -1,0 +1,340 @@
+# Raw dumps of 433 MHz OOK via CC1101 on WT32-ETH01
+#
+# Version: see substitutions.version below, also shown in the boot log
+#
+# Changelog
+#   1.0.0  2026-10-25  First versioned release: raw frame log with uptime and gap,
+#                      runtime CC1101 tuning, RX filter and tolerance, web UI groups,
+#                      all entities internal (web UI only, never exposed to Home Assistant)
+#
+# Wiring CC1101 -> WT32-ETH01
+#   VCC   -> 3V3
+#   GND   -> GND
+#   SCK   -> IO14
+#   MOSI  -> IO15   (SI)
+#   MISO  -> IO35   (SO/GDO1, IO35 is input only)
+#   CSN   -> IO4
+#   GDO2  -> IO36   (RX data to remote_receiver, input only)
+#   GDO0  -> CFG    (IO32, reserved for a later remote_transmitter)
+
+substitutions:
+  name: cc1101-dumper
+  friendly_name: CC1101 Dumper
+  version: "1.0.0"
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  project:
+    name: boilerplate4u.cc1101-dumper
+    version: ${version}
+  on_boot:
+    priority: -100
+    then:
+      # Apply the stored radio and receiver settings after a restart
+      - script.execute: apply_rf
+      - script.execute: apply_rx
+
+esp32:
+  board: wt32-eth01
+  framework:
+    type: esp-idf
+
+ethernet:
+  type: LAN8720
+  mdc_pin: GPIO23  # internal, not on the pin header
+  mdio_pin: GPIO18  # internal, not on the pin header
+  clk:
+    pin: GPIO0  # (IO0)
+    mode: CLK_EXT_IN
+  phy_addr: 1
+  power_pin: GPIO16  # internal, not on the pin header
+
+logger:
+  level: DEBUG
+
+api:
+
+ota:
+  - platform: esphome
+
+web_server:
+  port: 80
+  version: 3
+  # Show internal entities in the web UI, they are never sent to Home Assistant
+  include_internal: true
+  sorting_groups:
+    - id: grp_radio
+      name: "CC1101 radio"
+      sorting_weight: 10
+    - id: grp_dump
+      name: "Dump"
+      sorting_weight: 20
+    # Added when the decoder is built
+    # - id: grp_decoder
+    #   name: "Decoder"
+    #   sorting_weight: 30
+
+spi:
+  clk_pin: GPIO14  # (IO14)
+  mosi_pin: GPIO15  # (IO15)
+  miso_pin: GPIO35  # (IO35)
+
+cc1101:
+  id: radio
+  cs_pin: GPIO4  # (IO4)
+  frequency: 433.92MHz
+  modulation_type: ASK/OOK
+  filter_bandwidth: 203kHz
+  symbol_rate: 5000
+
+remote_receiver:
+  id: rx
+  pin: GPIO36  # (IO36)
+  # No dump here, logging is done in on_raw with a runtime filter
+  idle: 5ms
+  # filter and tolerance are start values, then controlled by RX filter and RX tolerance
+  filter: 100us
+  tolerance: 35%
+  # The classic ESP32 has 512 RMT symbols shared between RX and TX
+  # 384 for RX leaves 128 for a later remote_transmitter
+  rmt_symbols: 384
+  receive_symbols: 384
+  # Fixed floor against the shortest noise bursts, can only be changed at compile time
+  filter_symbols: 20
+  on_raw:
+    then:
+      - lambda: |-
+          // Time and gap are tracked for every frame, also the ones filtered out
+          static uint32_t last_ms = 0;
+          const uint32_t now_ms = millis();
+          const uint32_t gap_ms = last_ms ? now_ms - last_ms : 0;
+          last_ms = now_ms;
+          if (!id(raw_log).state) return;
+          const size_t n = x.size();
+          if (n < (size_t) id(min_pulses).state) return;
+          ESP_LOGD("rawdump", "Raw frame, %u pulses, t=%u.%03u s, gap=%u ms:", (unsigned) n,
+                   (unsigned) (now_ms / 1000), (unsigned) (now_ms % 1000), (unsigned) gap_ms);
+          std::string line;
+          for (size_t i = 0; i < n; i++) {
+            char buf[12];
+            snprintf(buf, sizeof(buf), "%ld, ", (long) x[i]);
+            line += buf;
+            if ((i + 1) % 16 == 0 || i + 1 == n) {
+              ESP_LOGD("rawdump", "  %s", line.c_str());
+              line.clear();
+            }
+          }
+
+number:
+  - platform: template
+    id: min_pulses
+    internal: true
+    web_server:
+      sorting_group_id: grp_dump
+      sorting_weight: 20
+    name: "Min pulses per frame"
+    icon: mdi:filter
+    optimistic: true
+    restore_value: true
+    initial_value: 60
+    min_value: 0
+    max_value: 384
+    step: 1
+    mode: box
+    entity_category: config
+
+  - platform: template
+    id: rx_filter
+    internal: true
+    name: "RX filter"
+    web_server:
+      sorting_group_id: grp_dump
+      sorting_weight: 30
+    icon: mdi:filter-variant
+    unit_of_measurement: us
+    optimistic: true
+    restore_value: true
+    initial_value: 100
+    # Below the shortest Nexa marks (about 211 us)
+    min_value: 50
+    max_value: 180
+    step: 10
+    mode: box
+    entity_category: config
+    on_value:
+      - script.execute: apply_rx
+
+  - platform: template
+    id: rx_tolerance
+    internal: true
+    name: "RX tolerance"
+    web_server:
+      sorting_group_id: grp_dump
+      sorting_weight: 40
+    icon: mdi:plus-minus-variant
+    unit_of_measurement: "%"
+    optimistic: true
+    restore_value: true
+    initial_value: 35
+    min_value: 15
+    max_value: 50
+    step: 1
+    mode: box
+    entity_category: config
+    on_value:
+      - script.execute: apply_rx
+
+switch:
+  - platform: template
+    id: raw_log
+    internal: true
+    web_server:
+      sorting_group_id: grp_dump
+      sorting_weight: 10
+    name: "Raw log"
+    icon: mdi:text-box-outline
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    entity_category: config
+
+script:
+  - id: apply_rx
+    mode: queued
+    then:
+      - lambda: |-
+          id(rx).set_filter_us((uint32_t) id(rx_filter).state);
+          id(rx).set_tolerance((uint32_t) id(rx_tolerance).state, remote_base::TOLERANCE_MODE_PERCENTAGE);
+
+  - id: apply_rf
+    mode: queued
+    then:
+      - lambda: |-
+          // The CC1101 only has these discrete bandwidth steps (kHz)
+          static const float BW_KHZ[] = {58, 68, 81, 102, 116, 135, 162, 203,
+                                         232, 270, 325, 406, 464, 541, 650, 812};
+          auto *rf = id(radio);
+          rf->set_filter_bandwidth(BW_KHZ[id(rx_bandwidth).active_index().value_or(7)] * 1000.0f);
+          rf->set_rx_attenuation(static_cast<cc1101::RxAttenuation>(id(rx_atten).active_index().value_or(0)));
+          rf->set_filter_length_ask_ook(static_cast<cc1101::FilterLengthAskOok>(id(ook_threshold).active_index().value_or(1)));
+          rf->set_hyst_level(static_cast<cc1101::HystLevel>(id(ook_hyst).active_index().value_or(2)));
+          rf->set_max_lna_gain(static_cast<cc1101::MaxLnaGain>(id(lna_max).active_index().value_or(0)));
+          rf->set_max_dvga_gain(static_cast<cc1101::MaxDvgaGain>(id(dvga_max).active_index().value_or(3)));
+          rf->set_magn_target(static_cast<cc1101::MagnTarget>(id(magn_target).active_index().value_or(7)));
+
+select:
+  - platform: template
+    id: rx_bandwidth
+    internal: true
+    web_server:
+      sorting_group_id: grp_radio
+      sorting_weight: 10
+    name: "RX filter bandwidth kHz"
+    icon: mdi:sine-wave
+    optimistic: true
+    restore_value: true
+    initial_option: "203"
+    # Same order as BW_KHZ in apply_rf
+    options: ["58", "68", "81", "102", "116", "135", "162", "203",
+              "232", "270", "325", "406", "464", "541", "650", "812"]
+    entity_category: config
+    on_value:
+      - script.execute: apply_rf
+
+  # All lists below follow the enum order in cc1101defs.h
+  # initial_option matches the ESPHome default
+  - platform: template
+    id: rx_atten
+    internal: true
+    web_server:
+      sorting_group_id: grp_radio
+      sorting_weight: 20
+    name: "RX attenuation"
+    icon: mdi:volume-minus
+    optimistic: true
+    restore_value: true
+    initial_option: "0dB"
+    options: ["0dB", "6dB", "12dB", "18dB"]
+    entity_category: config
+    on_value:
+      - script.execute: apply_rf
+
+  - platform: template
+    id: ook_threshold
+    internal: true
+    web_server:
+      sorting_group_id: grp_radio
+      sorting_weight: 30
+    name: "OOK decision boundary"
+    icon: mdi:tune-vertical
+    optimistic: true
+    restore_value: true
+    initial_option: "8dB"
+    options: ["4dB", "8dB", "12dB", "16dB"]
+    entity_category: config
+    on_value:
+      - script.execute: apply_rf
+
+  - platform: template
+    id: ook_hyst
+    internal: true
+    web_server:
+      sorting_group_id: grp_radio
+      sorting_weight: 40
+    name: "AGC hysteresis"
+    icon: mdi:chart-bell-curve
+    optimistic: true
+    restore_value: true
+    initial_option: "Medium"
+    options: ["None", "Low", "Medium", "High"]
+    entity_category: config
+    on_value:
+      - script.execute: apply_rf
+
+  - platform: template
+    id: lna_max
+    internal: true
+    web_server:
+      sorting_group_id: grp_radio
+      sorting_weight: 50
+    name: "Max LNA gain"
+    icon: mdi:antenna
+    optimistic: true
+    restore_value: true
+    initial_option: "Default"
+    options: ["Default", "-2.6dB", "-6.1dB", "-7.4dB", "-9.2dB", "-11.5dB", "-14.6dB", "-17.1dB"]
+    entity_category: config
+    on_value:
+      - script.execute: apply_rf
+
+  - platform: template
+    id: dvga_max
+    internal: true
+    web_server:
+      sorting_group_id: grp_radio
+      sorting_weight: 60
+    name: "Max DVGA gain"
+    icon: mdi:amplifier
+    optimistic: true
+    restore_value: true
+    initial_option: "-3"
+    options: ["Default", "-1", "-2", "-3"]
+    entity_category: config
+    on_value:
+      - script.execute: apply_rf
+
+  - platform: template
+    id: magn_target
+    internal: true
+    web_server:
+      sorting_group_id: grp_radio
+      sorting_weight: 70
+    name: "AGC target amplitude"
+    icon: mdi:target
+    optimistic: true
+    restore_value: true
+    initial_option: "42dB"
+    options: ["24dB", "27dB", "30dB", "33dB", "36dB", "38dB", "40dB", "42dB"]
+    entity_category: config
+    on_value:
+      - script.execute: apply_rf
