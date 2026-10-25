@@ -10,7 +10,7 @@ CC1101 and decoder settings can be changed at runtime in the device web UI. When
 
 All settings are internal entities: they are shown in the web UI only and are never exposed to Home Assistant.
 
-Runs on the WT32-ETH01 with Ethernet and on ordinary ESP32 boards with WiFi. A configuration for each is listed under Examples.
+Runs on the WT32-ETH01 with Ethernet and on ordinary ESP32 boards with WiFi. The main configuration `cc1101-dumper.yaml` is for the WT32-ETH01; other boards are listed under Hardware config examples.
 
 ## Status
 
@@ -22,13 +22,13 @@ Runs on the WT32-ETH01 with Ethernet and on ordinary ESP32 boards with WiFi. A c
 
 ## Hardware
 
-An ESP32 board and a CC1101 module. The CC1101 covers 300 to 928 MHz, including the 315, 433, 868 and 915 MHz ISM bands. The examples use 433.92 MHz; change `frequency` under `cc1101:` for another band. The wiring for each board is listed under Examples.
+An ESP32 board and a CC1101 module. The CC1101 covers 300 to 928 MHz, including the 315, 433, 868 and 915 MHz ISM bands. The examples use 433.92 MHz; change `frequency` under `cc1101:` for another band. The wiring for each board is listed under Hardware config examples.
 
 Use a module matched for the band you receive: the chip covers all bands, but the module's antenna circuit is tuned for one, and sensitivity drops on the others. A straight quarter-wave wire is a good antenna: 23.8 cm for 315 MHz, 17.3 cm for 433 MHz, 8.6 cm for 868 MHz and 8.2 cm for 915 MHz.
 
 ## Quick start
 
-1. Pick the example for your board under Examples, add it in ESPHome Device Builder and install it.
+1. Add `cc1101-dumper.yaml`, or the example for your board under Hardware config examples, in ESPHome Device Builder and install it.
 2. To change settings och follow to trace/debug log online, open the device web UI at `http://<device name>.local/`.
 3. You don't need to add the device in Home Assistant.&#32;
 
@@ -96,11 +96,11 @@ Change one setting at a time and compare the number of noise frames with the num
 
 MIT
 
-## Examples
+## Hardware config examples
 
 ### WT32-ETH01 (Ethernet)
 
-`examples/cc1101-dumper-wt32-eth01.yaml`
+`cc1101-dumper.yaml` (main configuration)
 
 | CC1101 | WT32-ETH01 |
 | --- | --- |
@@ -115,7 +115,7 @@ MIT
 
 ### ESP32 with WiFi
 
-`examples/cc1101-dumper-esp32-wifi.yaml`
+`hardware-config-examples/cc1101-dumper-esp32-wifi.yaml`
 
 | CC1101 | ESP32 |
 | --- | --- |
