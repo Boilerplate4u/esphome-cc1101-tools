@@ -100,7 +100,7 @@ MIT
 
 ### WT32-ETH01 (Ethernet)
 
-`cc1101-dumper.yaml` (main configuration)
+`hardware-config-examples/cc1101-dumper-wt32-eth01.yaml` (same as the main configuration `cc1101-dumper.yaml`)
 
 | CC1101 | WT32-ETH01 |
 | --- | --- |
