@@ -33,7 +33,14 @@ static const char *const TAG = "rf_sniffer";
 static const char *const TAG_RAW = "rf_raw";
 
 static const size_t RAW_VALUES_PER_LINE = 32;
-static const uint32_t RSSI_INTERVAL_US = 1000;
+// Every SPI access puts a short pulse (about 25 us per access) on the CC1101 data
+// output. RSSI is therefore read rarely, in a single access, and during a frame
+// only while the data pin is high, where such a pulse cannot be seen.
+static const uint32_t FRAME_QUIET_US = 5000;           // an edge after this much silence starts a frame
+static const uint32_t FRAME_READ_INTERVAL_US = 10000;  // between reads during one frame
+static const uint8_t FRAME_MAX_READS = 4;
+static const uint32_t FLOOR_INTERVAL_US = 1000000;  // noise floor sample interval
+static const uint32_t FLOOR_QUIET_US = 50000;       // no edge for this long before a floor sample
 static const uint64_t CLOCK_WARNING_INTERVAL_MS = 60 * 1000;
 static const uint64_t CLOCK_STALE_MS = 60 * 60 * 1000;
 // CC1101 status register RSSI, read as burst (0x40) + read (0x80).
@@ -98,11 +105,23 @@ RfSniffer::RfSniffer() {
     v = true;
 }
 
+#ifdef USE_RF_SNIFFER_RSSI
+void IRAM_ATTR RfSniffer::gpio_intr_(RfSniffer *arg) {
+  const uint32_t now = micros();
+  if (now - arg->last_edge_us_ > FRAME_QUIET_US)
+    arg->frame_started_ = true;
+  arg->last_edge_us_ = now;
+}
+#endif
+
 void RfSniffer::setup() {
   this->interval_start_ms_ = this->now_ms_();
 #ifdef USE_RF_SNIFFER_RSSI
-  if (this->radio_ != nullptr)
-    this->high_freq_.start();  // RSSI is sampled about every millisecond
+  if (this->radio_ != nullptr && this->activity_pin_ != nullptr) {
+    this->activity_pin_->setup();
+    this->activity_isr_pin_ = this->activity_pin_->to_isr();
+    this->activity_pin_->attach_interrupt(&RfSniffer::gpio_intr_, this, gpio::INTERRUPT_ANY_EDGE);
+  }
 #endif
 #ifdef USE_RF_SNIFFER_TIME
   if (this->time_ != nullptr) {
@@ -167,32 +186,60 @@ std::string RfSniffer::timestamp_(uint64_t uptime_ms) {
   return format_wall_time(local.tm_hour, local.tm_min, local.tm_sec, static_cast<int>(wall_ms % 1000));
 }
 
-void RfSniffer::read_rssi_() {
+bool RfSniffer::read_rssi_raw_(uint8_t &raw) {
+#ifdef USE_RF_SNIFFER_RSSI
+  if (this->radio_ == nullptr)
+    return false;
+  // One access only: each one disturbs the data output (see FRAME_QUIET_US).
+  this->radio_->enable();
+  this->radio_->write_byte(CC1101_RSSI_STATUS);
+  raw = this->radio_->transfer_byte(0);
+  this->radio_->disable();
+  return true;
+#else
+  return false;
+#endif
+}
+
+void RfSniffer::sample_rssi_() {
 #ifdef USE_RF_SNIFFER_RSSI
   if (this->radio_ == nullptr)
     return;
-  const uint32_t now_us = micros();
-  if (now_us - this->last_rssi_us_ < RSSI_INTERVAL_US)
-    return;
-  this->last_rssi_us_ = now_us;
-  // CC1101 errata: status registers can change while being read; read until two agree.
-  uint8_t previous = 0;
-  for (int attempt = 0; attempt < 4; attempt++) {
-    this->radio_->enable();
-    this->radio_->write_byte(CC1101_RSSI_STATUS);
-    const uint8_t value = this->radio_->transfer_byte(0);
-    this->radio_->disable();
-    if (attempt > 0 && value == previous) {
-      this->rssi_.add(this->now_ms_(), value);
+  const uint32_t now = micros();
+  uint8_t raw = 0;
+  if (this->activity_pin_ != nullptr) {
+    if (this->frame_started_) {
+      this->frame_started_ = false;
+      this->frame_reads_ = 0;
+      this->last_rssi_us_ = now;  // first read after FRAME_READ_INTERVAL_US, when the AGC has settled
+      this->high_freq_.start();
+    }
+    const bool in_frame = now - this->last_edge_us_ <= FRAME_QUIET_US;
+    if (in_frame) {
+      if (this->frame_reads_ < FRAME_MAX_READS && now - this->last_rssi_us_ >= FRAME_READ_INTERVAL_US &&
+          this->activity_isr_pin_.digital_read() && this->read_rssi_raw_(raw)) {
+        this->rssi_.add(this->now_ms_(), raw);
+        this->frame_reads_++;
+        this->last_rssi_us_ = now;
+      }
       return;
     }
-    previous = value;
+    this->high_freq_.stop();
+    if (now - this->last_edge_us_ < FLOOR_QUIET_US)
+      return;
+  } else if (this->now_ms_() - this->last_frame_end_ms_ < FLOOR_QUIET_US / 1000) {
+    // Without the data pin only the noise floor is measured, away from frames.
+    return;
+  }
+  if (now - this->last_floor_us_ >= FLOOR_INTERVAL_US && this->read_rssi_raw_(raw)) {
+    this->rssi_.add_floor(raw);
+    this->last_floor_us_ = now;
   }
 #endif
 }
 
 void RfSniffer::loop() {
-  this->read_rssi_();
+  this->sample_rssi_();
   this->check_clock_();
   this->finished_.clear();
   this->aggregator_.poll(this->now_ms_(), this->max_repeat_wait_ms_, this->finished_);
@@ -233,7 +280,7 @@ bool RfSniffer::decode_builtin_(const remote_base::RemoteReceiveData &data, Deco
       return true;
     }
   }
-  {
+  if (this->visible_[static_cast<size_t>(Decoder::DRAYTON)]) {
     auto r = DraytonProtocol().decode(data);
     if (r.has_value()) {
       decoder = Decoder::DRAYTON;
@@ -297,6 +344,8 @@ bool RfSniffer::decode_builtin_(const remote_base::RemoteReceiveData &data, Deco
   }
 #endif
   // Generic and last: only when no specific protocol matched.
+  if (!this->visible_[static_cast<size_t>(Decoder::RC_SWITCH)])
+    return false;
   for (size_t i = 1; i < std::size(RC_SWITCH_PROTOCOLS); i++) {
     RemoteReceiveData src = data;
     src.reset();
@@ -319,34 +368,45 @@ bool RfSniffer::on_receive(remote_base::RemoteReceiveData data) {
   const uint64_t duration_ms = capture_duration_us(raw) / 1000;
   const uint64_t start_ms = end_ms > duration_ms ? end_ms - duration_ms : 0;
   this->frames_++;
+  this->last_frame_end_ms_ = end_ms;
 
   int16_t rssi_dbm = 0;
   const bool has_rssi = this->rssi_.peak(start_ms, end_ms, rssi_dbm);
 
+  // Oregon first. A message it found but rejected still belongs to Oregon: it is
+  // logged as rejected and not offered to the other decoders, which would read
+  // its Manchester bits as something else (Drayton in particular).
   std::vector<Decoded> found;
-  Decoder decoder = Decoder::OREGON;
-  bool claimed = this->oregon_.decode(raw, found) > 0;
-  if (!claimed) {
+  this->oregon_.decode(raw, found);
+  bool accepted = false;
+  for (const auto &d : found)
+    accepted |= !d.rejected;
+  const bool oregon_rejected = !found.empty() && !accepted;
+  if (found.empty()) {
     Decoded d;
+    Decoder decoder = Decoder::OREGON;
     if (this->decode_builtin_(data, decoder, d)) {
       d.decoder = decoder;
       found.push_back(d);
-      claimed = true;
+      accepted = true;
     }
   }
 
-  if (claimed) {
+  if (accepted) {
     this->decoded_++;
     this->per_decoder_[static_cast<size_t>(found.front().decoder)]++;
+  } else if (oregon_rejected) {
+    this->oregon_rejected_++;
   } else if (raw.size() >= this->min_pulses_) {
     this->unknown_++;
   } else {
     this->noise_interval_++;
   }
 
-  // Raw dump: every frame, or only the ones no decoder claimed (hidden decoders claim too).
+  // Raw dump: every frame, or the ones no decoder accepted (hidden decoders accept
+  // too, rejected Oregon messages do not).
   if (raw.size() >= this->min_pulses_ &&
-      (this->raw_mode_ == RawMode::ALL || (this->raw_mode_ == RawMode::UNKNOWN_ONLY && !claimed)))
+      (this->raw_mode_ == RawMode::ALL || (this->raw_mode_ == RawMode::UNKNOWN_ONLY && !accepted)))
     this->log_raw_(raw, start_ms, has_rssi, rssi_dbm);
   this->last_frame_ms_ = start_ms;
 
@@ -354,11 +414,11 @@ bool RfSniffer::on_receive(remote_base::RemoteReceiveData data) {
   this->finished_.clear();
   for (const auto &d : found) {
     if (this->visible_[static_cast<size_t>(d.decoder)])
-      this->aggregator_.add(d, start_ms, has_rssi, rssi_dbm, this->finished_);
+      this->aggregator_.add(d, start_ms, end_ms, has_rssi, rssi_dbm, this->finished_);
   }
   for (const auto &line : this->finished_)
     this->log_line_(line);
-  return claimed;
+  return accepted;
 }
 
 void RfSniffer::log_raw_(const std::vector<int32_t> &raw, uint64_t start_ms, bool has_rssi, int16_t rssi_dbm) {
@@ -376,6 +436,12 @@ void RfSniffer::log_raw_(const std::vector<int32_t> &raw, uint64_t start_ms, boo
 }
 
 void RfSniffer::log_line_(const Line &line) {
+  if (decoder_is_weak(line.decoder) && line.repeats < 2) {
+    // No checksum: one copy alone is too often a misread of something else.
+    ESP_LOGV(TAG, "%s - %s %s rep=1 (ignored, needs 2 copies)", this->timestamp_(line.first_ms).c_str(),
+             decoder_name(line.decoder), line.fields.c_str());
+    return;
+  }
   std::string text = this->timestamp_(line.first_ms) + " - " + decoder_name(line.decoder) + " " + line.fields;
   if (!line.quality.empty())
     text += " " + line.quality;
@@ -397,6 +463,8 @@ void RfSniffer::update() {
     this->decoded_sensor_->publish_state(this->decoded_);
   if (this->unknown_sensor_ != nullptr)
     this->unknown_sensor_->publish_state(this->unknown_);
+  if (this->oregon_rejected_sensor_ != nullptr)
+    this->oregon_rejected_sensor_->publish_state(this->oregon_rejected_);
   if (this->noise_per_minute_sensor_ != nullptr && interval_ms > 0)
     this->noise_per_minute_sensor_->publish_state(this->noise_interval_ * 60000.0f / interval_ms);
   float floor_dbm = 0;
@@ -425,6 +493,7 @@ void RfSniffer::reset_statistics() {
   this->frames_ = 0;
   this->decoded_ = 0;
   this->unknown_ = 0;
+  this->oregon_rejected_ = 0;
   for (auto &count : this->per_decoder_)
     count = 0;
   // update() publishes the zeroed values and starts a new noise interval.
@@ -452,7 +521,15 @@ void RfSniffer::dump_config() {
   ESP_LOGCONFIG(TAG, "  Max repeat wait: %" PRIu32 " ms, min pulses %" PRIu32, this->max_repeat_wait_ms_,
                 this->min_pulses_);
 #ifdef USE_RF_SNIFFER_RSSI
-  ESP_LOGCONFIG(TAG, "  RSSI: %s", this->radio_ != nullptr ? "CC1101, sampled every 1 ms" : "no");
+  if (this->radio_ == nullptr) {
+    ESP_LOGCONFIG(TAG, "  RSSI: no");
+  } else if (this->activity_pin_ != nullptr) {
+    ESP_LOGCONFIG(TAG, "  RSSI: per frame (up to %u reads while the data pin is high), noise floor every %" PRIu32 " s",
+                  FRAME_MAX_READS, FLOOR_INTERVAL_US / 1000000);
+    LOG_PIN("  Activity pin: ", this->activity_pin_);
+  } else {
+    ESP_LOGCONFIG(TAG, "  RSSI: noise floor only, every %" PRIu32 " s (no activity_pin)", FLOOR_INTERVAL_US / 1000000);
+  }
 #else
   ESP_LOGCONFIG(TAG, "  RSSI: no");
 #endif

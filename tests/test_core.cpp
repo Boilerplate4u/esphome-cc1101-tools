@@ -161,16 +161,36 @@ static void test_oregon_unknown_type() {
   }
 }
 
+static void test_oregon_rejected() {
+  // The channel 1 message from 2026-10-25 with a wrong checksum.
+  std::vector<uint8_t> m = {0x1A, 0x2D, 0x10, 0x7B, 0x10, 0x09, 0x80, 0xC9, 0x4A, 0xCC};
+  set_nibble(m, 16, (oregon_nibble(m.data(), 16) + 1) & 0x0F);
+  OregonSniffer oregon;
+  std::vector<Decoded> out;
+  CHECK(oregon.decode(encode_v21(m), out) == 1);
+  CHECK(oregon.rejected() == 1);
+  if (out.size() == 1) {
+    CHECK(out[0].rejected);
+    CHECK(out[0].fields.rfind("rejected reason=bad_checksum nibbles=A1D201B7", 0) == 0);
+    CHECK(out[0].sender.rfind("rejected:", 0) == 0);
+    CHECK(out[0].quality.find("pair_errors=0") != std::string::npos);
+  }
+  // A valid message is not marked rejected.
+  out.clear();
+  std::vector<uint8_t> ok = {0x1A, 0x2D, 0x10, 0x7B, 0x10, 0x09, 0x80, 0xC9, 0x4A, 0xCC};
+  CHECK(oregon.decode(encode_v21(ok), out) == 1 && !out[0].rejected);
+}
+
 static void test_repeats() {
   RepeatAggregator agg;
   std::vector<Line> out;
   // Nexa: 5 copies 90 ms apart, then off.
   for (int i = 0; i < 5; i++)
-    agg.add(decoded("13D2A9A:3", "device=13D2A9A state=on"), 1000 + i * 90, true, -60 + i, out);
+    agg.add(decoded("13D2A9A:3", "device=13D2A9A state=on"), 1000 + i * 90, 1000 + i * 90 + 76, true, -60 + i, out);
   CHECK(out.empty());
   agg.poll(1000 + 4 * 90 + 499, 500, out);
   CHECK(out.empty());  // still waiting
-  agg.add(decoded("13D2A9A:3", "device=13D2A9A state=off"), 1000 + 4 * 90 + 600, true, -70, out);
+  agg.add(decoded("13D2A9A:3", "device=13D2A9A state=off"), 1000 + 4 * 90 + 600, 1000 + 4 * 90 + 676, true, -70, out);
   CHECK(out.size() == 1);  // new data from the same sender ends the line at once
   if (!out.empty()) {
     CHECK(out[0].repeats == 5);
@@ -181,14 +201,16 @@ static void test_repeats() {
     CHECK(out[0].fields == "device=13D2A9A state=on");
   }
   out.clear();
-  agg.poll(1000 + 4 * 90 + 600 + 500, 500, out);
+  agg.poll(1000 + 4 * 90 + 676 + 499, 500, out);
+  CHECK(out.empty());  // the wait counts from the end of the last copy
+  agg.poll(1000 + 4 * 90 + 676 + 500, 500, out);
   CHECK(out.size() == 1 && out[0].repeats == 1 && out[0].fields == "device=13D2A9A state=off");
 
   // Two senders interleaved stay separate; output is in reception order.
   out.clear();
-  agg.add(decoded("a", "x=1"), 5000, false, 0, out);
-  agg.add(decoded("b", "y=1"), 5100, false, 0, out);
-  agg.add(decoded("a", "x=1"), 5240, false, 0, out);
+  agg.add(decoded("a", "x=1"), 5000, 5010, false, 0, out);
+  agg.add(decoded("b", "y=1"), 5100, 5110, false, 0, out);
+  agg.add(decoded("a", "x=1"), 5240, 5250, false, 0, out);
   agg.poll(6000, 500, out);
   CHECK(out.size() == 2);
   if (out.size() == 2) {
@@ -198,12 +220,24 @@ static void test_repeats() {
   // A full table ends the oldest line.
   out.clear();
   for (int i = 0; i < 9; i++)
-    agg.add(decoded(std::to_string(i).c_str(), "z=1"), 7000 + i, false, 0, out);
+    agg.add(decoded(std::to_string(i).c_str(), "z=1"), 7000 + i, 7010 + i, false, 0, out);
   CHECK(out.size() == 1 && out[0].first_ms == 7000);
   CHECK(agg.pending() == RepeatAggregator::MAX_PENDING);
   out.clear();
   agg.flush(out);
   CHECK(out.size() == RepeatAggregator::MAX_PENDING && agg.pending() == 0);
+
+  // Oregon copies of 192 ms whose second copy starts 446 ms after the first: the
+  // second copy is complete at 638 ms, after the 500 ms wait counted from the start.
+  out.clear();
+  agg.add(decoded("1D20:1:7B", "temp=11.3"), 10000, 10192, false, 0, out);
+  agg.poll(10500, 500, out);
+  CHECK(out.empty());
+  agg.add(decoded("1D20:1:7B", "temp=11.3"), 10446, 10638, false, 0, out);
+  agg.poll(11137, 500, out);
+  CHECK(out.empty());
+  agg.poll(11138, 500, out);
+  CHECK(out.size() == 1 && out[0].repeats == 2 && out[0].span_ms == 446 && out[0].max_gap_ms == 446);
 }
 
 static void test_rssi() {
@@ -211,16 +245,24 @@ static void test_rssi() {
   CHECK(std::fabs(RssiTracker::raw_to_dbm(0x14) + 64.0f) < 0.01f);   // +20 -> -64 dBm
   CHECK(std::fabs(RssiTracker::raw_to_dbm(0xC4) + 104.0f) < 0.01f);  // -60 -> -104 dBm
   RssiTracker rssi;
-  for (uint64_t t = 0; t < 800; t++)
-    rssi.add(t, static_cast<uint8_t>(int8_t(-60)));  // noise -104 dBm (ring holds 1024)
-  for (uint64_t t = 400; t < 600; t++)
-    rssi.add(t, static_cast<uint8_t>(int8_t(30)));  // frame -59 dBm
+  rssi.add(410, static_cast<uint8_t>(int8_t(20)));  // frame reads: -64, -59, -62 dBm
+  rssi.add(420, static_cast<uint8_t>(int8_t(30)));
+  rssi.add(430, static_cast<uint8_t>(int8_t(24)));
+  rssi.add(900, static_cast<uint8_t>(int8_t(-10)));  // another frame, -79 dBm
   int16_t peak = 0;
   CHECK(rssi.peak(400, 599, peak) && peak == -59);
-  CHECK(rssi.peak(0, 100, peak) && peak == -104);
+  CHECK(rssi.peak(800, 1000, peak) && peak == -79);
   CHECK(!rssi.peak(5000, 6000, peak));
   float floor_dbm = 0;
+  CHECK(!rssi.noise_floor(floor_dbm));  // frame reads do not count for the floor
+  for (int i = 0; i < 9; i++)
+    rssi.add_floor(static_cast<uint8_t>(int8_t(i < 6 ? -60 : -20)));  // mostly -104 dBm
   CHECK(rssi.noise_floor(floor_dbm) && std::fabs(floor_dbm + 104.0f) < 0.01f);
+  // The ring keeps the newest SAMPLES reads, also across the 32 bit time wrap.
+  for (uint64_t i = 0; i < RssiTracker::SAMPLES; i++)
+    rssi.add(0xFFFFFFF0ull + i, static_cast<uint8_t>(int8_t(i == 20 ? 40 : 0)));  // -54 dBm at the peak
+  CHECK(rssi.peak(0xFFFFFFF0ull, 0xFFFFFFF0ull + RssiTracker::SAMPLES, peak) && peak == -54);
+  CHECK(!rssi.peak(400, 599, peak));
   rssi.reset_floor();
   CHECK(!rssi.noise_floor(floor_dbm));
 }
@@ -244,6 +286,7 @@ int main(int argc, char **argv) {
   CHECK(caps.size() == 10);
   test_oregon_real_captures(caps);
   test_oregon_unknown_type();
+  test_oregon_rejected();
   test_repeats();
   test_rssi();
   test_format();

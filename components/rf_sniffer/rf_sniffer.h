@@ -51,6 +51,8 @@ class RfSniffer : public PollingComponent, public remote_base::RemoteReceiverLis
 
 #ifdef USE_RF_SNIFFER_RSSI
   void set_radio(cc1101::CC1101Component *radio) { this->radio_ = radio; }
+  /// The receiver data pin (GDO2), watched for the start of frames.
+  void set_activity_pin(InternalGPIOPin *pin) { this->activity_pin_ = pin; }
 #endif
 #ifdef USE_RF_SNIFFER_TIME
   void set_time(time::RealTimeClock *clock) { this->time_ = clock; }
@@ -61,6 +63,7 @@ class RfSniffer : public PollingComponent, public remote_base::RemoteReceiverLis
   void set_unknown_sensor(sensor::Sensor *s) { this->unknown_sensor_ = s; }
   void set_noise_per_minute_sensor(sensor::Sensor *s) { this->noise_per_minute_sensor_ = s; }
   void set_noise_floor_sensor(sensor::Sensor *s) { this->noise_floor_sensor_ = s; }
+  void set_oregon_rejected_sensor(sensor::Sensor *s) { this->oregon_rejected_sensor_ = s; }
 #endif
 #ifdef USE_TEXT_SENSOR
   void set_per_protocol_text_sensor(text_sensor::TextSensor *s) { this->per_protocol_sensor_ = s; }
@@ -68,6 +71,9 @@ class RfSniffer : public PollingComponent, public remote_base::RemoteReceiverLis
 
   /// Decoders compiled into this build (dev only ones depend on the ESPHome version).
   static bool decoder_available(Decoder decoder);
+  /// Decoders without a checksum: only run while visible, and a line needs two
+  /// identical copies before it is logged.
+  static bool decoder_is_weak(Decoder decoder) { return decoder == Decoder::DRAYTON || decoder == Decoder::RC_SWITCH; }
 
  protected:
   uint64_t now_ms_();
@@ -76,7 +82,8 @@ class RfSniffer : public PollingComponent, public remote_base::RemoteReceiverLis
   void log_line_(const Line &line);
   std::string timestamp_(uint64_t uptime_ms);
   bool clock_valid_();
-  void read_rssi_();
+  void sample_rssi_();
+  bool read_rssi_raw_(uint8_t &raw);
   void check_clock_();
 
   OregonSniffer oregon_;
@@ -92,11 +99,13 @@ class RfSniffer : public PollingComponent, public remote_base::RemoteReceiverLis
   uint32_t last_millis_{0};
   uint64_t millis_high_{0};
   uint64_t last_frame_ms_{0};
+  uint64_t last_frame_end_ms_{0};
 
   // Statistics, counted since boot unless noted.
   uint32_t frames_{0};
   uint32_t decoded_{0};
   uint32_t unknown_{0};
+  uint32_t oregon_rejected_{0};
   uint32_t noise_interval_{0};  // since the last update()
   uint64_t interval_start_ms_{0};
   uint32_t per_decoder_[DECODER_COUNT]{};
@@ -107,8 +116,17 @@ class RfSniffer : public PollingComponent, public remote_base::RemoteReceiverLis
   bool synced_once_{false};
 
 #ifdef USE_RF_SNIFFER_RSSI
+  static void gpio_intr_(RfSniffer *arg);
   cc1101::CC1101Component *radio_{nullptr};
+  InternalGPIOPin *activity_pin_{nullptr};
+  ISRInternalGPIOPin activity_isr_pin_;
+  // Written by the interrupt on every edge of the data pin.
+  volatile uint32_t last_edge_us_{0};
+  volatile bool frame_started_{false};
   uint32_t last_rssi_us_{0};
+  uint32_t last_floor_us_{0};
+  uint8_t frame_reads_{0};
+  // Runs the loop continuously only while a frame is being received.
   HighFrequencyLoopRequester high_freq_;
 #endif
 #ifdef USE_RF_SNIFFER_TIME
@@ -120,6 +138,7 @@ class RfSniffer : public PollingComponent, public remote_base::RemoteReceiverLis
   sensor::Sensor *unknown_sensor_{nullptr};
   sensor::Sensor *noise_per_minute_sensor_{nullptr};
   sensor::Sensor *noise_floor_sensor_{nullptr};
+  sensor::Sensor *oregon_rejected_sensor_{nullptr};
 #endif
 #ifdef USE_TEXT_SENSOR
   text_sensor::TextSensor *per_protocol_sensor_{nullptr};

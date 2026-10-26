@@ -5,6 +5,7 @@ built-in ESPHome RF protocols, and logs one line per transmission with its
 repeat count, signal strength (CC1101) and reception time.
 """
 
+from esphome import pins
 import esphome.codegen as cg
 from esphome.components import remote_base, sensor, text_sensor
 import esphome.config_validation as cv
@@ -23,6 +24,7 @@ AUTO_LOAD = ["sensor", "text_sensor"]
 
 CONF_RECEIVER_ID = "receiver_id"
 CONF_CC1101_ID = "cc1101_id"
+CONF_ACTIVITY_PIN = "activity_pin"
 CONF_RAW_MODE = "raw_mode"
 CONF_MIN_PULSES = "min_pulses"
 CONF_MAX_REPEAT_WAIT = "max_repeat_wait"
@@ -39,6 +41,7 @@ CONF_DECODED = "decoded"
 CONF_UNKNOWN = "unknown"
 CONF_NOISE_PER_MINUTE = "noise_per_minute"
 CONF_NOISE_FLOOR = "noise_floor"
+CONF_OREGON_REJECTED = "oregon_rejected"
 CONF_PER_PROTOCOL = "per_protocol"
 
 rf_sniffer_ns = cg.esphome_ns.namespace("rf_sniffer")
@@ -132,6 +135,7 @@ STATISTICS_SCHEMA = cv.Schema(
         cv.Optional(CONF_FRAMES): _COUNTER,
         cv.Optional(CONF_DECODED): _COUNTER,
         cv.Optional(CONF_UNKNOWN): _COUNTER,
+        cv.Optional(CONF_OREGON_REJECTED): _COUNTER,
         cv.Optional(CONF_NOISE_PER_MINUTE): sensor.sensor_schema(
             accuracy_decimals=1,
             state_class=STATE_CLASS_MEASUREMENT,
@@ -149,22 +153,37 @@ STATISTICS_SCHEMA = cv.Schema(
     }
 )
 
-CONFIG_SCHEMA = cv.Schema(
-    {
-        cv.GenerateID(): cv.declare_id(RfSniffer),
-        cv.GenerateID(CONF_RECEIVER_ID): cv.use_id(remote_base.RemoteReceiverBase),
-        cv.Optional(CONF_CC1101_ID): cv.use_id(CC1101Component),
-        cv.Optional(CONF_TIME_ID): cv.use_id(RealTimeClock),
-        cv.Optional(CONF_RAW_MODE, default="off"): cv.enum(RAW_MODES, lower=True),
-        cv.Optional(CONF_MIN_PULSES, default=60): cv.int_range(min=0, max=1024),
-        cv.Optional(CONF_MAX_REPEAT_WAIT, default="500ms"): cv.All(
-            cv.positive_time_period_milliseconds,
-            cv.Range(min=cv.TimePeriod(milliseconds=100), max=cv.TimePeriod(seconds=2)),
-        ),
-        cv.Optional(CONF_OREGON, default={}): OREGON_SCHEMA,
-        cv.Optional(CONF_STATISTICS, default={}): STATISTICS_SCHEMA,
-    }
-).extend(cv.polling_component_schema("60s"))
+
+def _validate_activity_pin(config):
+    if CONF_ACTIVITY_PIN in config and CONF_CC1101_ID not in config:
+        raise cv.Invalid(f"{CONF_ACTIVITY_PIN} requires {CONF_CC1101_ID}")
+    return config
+
+
+CONFIG_SCHEMA = cv.All(
+    cv.Schema(
+        {
+            cv.GenerateID(): cv.declare_id(RfSniffer),
+            cv.GenerateID(CONF_RECEIVER_ID): cv.use_id(remote_base.RemoteReceiverBase),
+            cv.Optional(CONF_CC1101_ID): cv.use_id(CC1101Component),
+            # The receiver data pin (CC1101 GDO2). With it RSSI is read during frames,
+            # without it only the noise floor is measured.
+            cv.Optional(CONF_ACTIVITY_PIN): pins.internal_gpio_input_pin_schema,
+            cv.Optional(CONF_TIME_ID): cv.use_id(RealTimeClock),
+            cv.Optional(CONF_RAW_MODE, default="off"): cv.enum(RAW_MODES, lower=True),
+            cv.Optional(CONF_MIN_PULSES, default=60): cv.int_range(min=0, max=1024),
+            cv.Optional(CONF_MAX_REPEAT_WAIT, default="500ms"): cv.All(
+                cv.positive_time_period_milliseconds,
+                cv.Range(
+                    min=cv.TimePeriod(milliseconds=100), max=cv.TimePeriod(seconds=2)
+                ),
+            ),
+            cv.Optional(CONF_OREGON, default={}): OREGON_SCHEMA,
+            cv.Optional(CONF_STATISTICS, default={}): STATISTICS_SCHEMA,
+        }
+    ).extend(cv.polling_component_schema("60s")),
+    _validate_activity_pin,
+)
 
 
 def _us(value):
@@ -192,6 +211,9 @@ async def to_code(config):
         cg.add_define("USE_RF_SNIFFER_RSSI")
         radio = await cg.get_variable(config[CONF_CC1101_ID])
         cg.add(var.set_radio(radio))
+        if CONF_ACTIVITY_PIN in config:
+            pin = await cg.gpio_pin_expression(config[CONF_ACTIVITY_PIN])
+            cg.add(var.set_activity_pin(pin))
     if CONF_TIME_ID in config:
         cg.add_define("USE_RF_SNIFFER_TIME")
         clock = await cg.get_variable(config[CONF_TIME_ID])
@@ -224,6 +246,7 @@ async def to_code(config):
         CONF_FRAMES,
         CONF_DECODED,
         CONF_UNKNOWN,
+        CONF_OREGON_REJECTED,
         CONF_NOISE_PER_MINUTE,
         CONF_NOISE_FLOOR,
     ):

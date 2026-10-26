@@ -6,8 +6,8 @@
 //   repeat counter.
 // - OregonSniffer decodes Oregon Scientific v2.1 messages (known and unknown
 //   types) into log lines.
-// - RssiTracker keeps recent RSSI samples for the peak during a frame and a
-//   histogram for the noise floor.
+// - RssiTracker keeps the few RSSI samples taken during frames for the peak of
+//   each frame, and a histogram of quiet time samples for the noise floor.
 // - format helpers for timestamps and raw pulse dumps.
 
 #include <cstddef>
@@ -54,6 +54,8 @@ struct Decoded {
   /// Extra quality fields that may differ between copies ("short=487 ...").
   /// Taken from the first copy.
   std::string quality;
+  /// An Oregon message that was found but failed its checks (fields hold the reason).
+  bool rejected{false};
 };
 
 /// A finished line: one transmission with all its copies.
@@ -61,9 +63,9 @@ struct Line {
   Decoder decoder{Decoder::OREGON};
   std::string fields;
   std::string quality;
-  uint64_t first_ms{0};  // reception time of the first copy (see TimeBase)
-  uint32_t span_ms{0};   // first to last copy
-  uint32_t max_gap_ms{0};
+  uint64_t first_ms{0};    // start of the first copy
+  uint32_t span_ms{0};     // start of the first to start of the last copy
+  uint32_t max_gap_ms{0};  // largest start to start time between two copies
   uint16_t repeats{0};
   bool has_rssi{false};
   int16_t rssi_dbm{0};  // strongest copy
@@ -73,10 +75,12 @@ class RepeatAggregator {
  public:
   static constexpr size_t MAX_PENDING = 8;
 
-  /// Adds a copy received at `time_ms`. Lines that end because of it (same sender,
-  /// other data, or the pending table is full) are appended to `out`.
-  void add(const Decoded &decoded, uint64_t time_ms, bool has_rssi, int16_t rssi_dbm, std::vector<Line> &out);
-  /// Ends every line whose last copy is at least `max_wait_ms` old.
+  /// Adds a copy that started at `start_ms` and was received completely at `end_ms`.
+  /// Lines that end because of it (same sender, other data, or the pending table is
+  /// full) are appended to `out`.
+  void add(const Decoded &decoded, uint64_t start_ms, uint64_t end_ms, bool has_rssi, int16_t rssi_dbm,
+           std::vector<Line> &out);
+  /// Ends every line whose last copy was received at least `max_wait_ms` ago.
   void poll(uint64_t now_ms, uint32_t max_wait_ms, std::vector<Line> &out);
   /// Ends every pending line.
   void flush(std::vector<Line> &out);
@@ -87,7 +91,8 @@ class RepeatAggregator {
     bool used{false};
     std::string sender;
     Line line;
-    uint64_t last_ms{0};
+    uint64_t last_start_ms{0};
+    uint64_t last_end_ms{0};
   };
   void finish_(Entry &entry, std::vector<Line> &out);
   Entry entries_[MAX_PENDING];
@@ -102,10 +107,12 @@ class OregonSniffer {
   bool get_verify_bit_pairs() const { return this->verify_bit_pairs_; }
 
   /// Pulse widths in microseconds, signs as delivered by remote_receiver.
-  /// Appends one Decoded per accepted message and returns how many were found.
+  /// Appends one Decoded per message found, accepted or rejected, and returns
+  /// how many were found.
   size_t decode(const std::vector<int32_t> &raw, std::vector<Decoded> &out);
 
-  /// Messages rejected since boot (bit pair errors, checksum, values).
+  /// Messages rejected since boot (bit pair errors, checksum, values). Each one is
+  /// also returned by decode() with `rejected` set.
   uint32_t rejected() const { return this->rejected_; }
 
  protected:
@@ -115,24 +122,26 @@ class OregonSniffer {
   uint32_t rejected_{0};
 };
 
-/// Recent RSSI samples and a noise floor histogram.
+/// RSSI samples taken during frames, and a noise floor histogram.
 class RssiTracker {
  public:
-  static constexpr size_t SAMPLES = 1024;
+  static constexpr size_t SAMPLES = 32;
 
-  /// `raw` is the CC1101 RSSI register value (two's complement, 0.5 dB steps).
+  /// A sample taken during a frame. `raw` is the CC1101 RSSI register value
+  /// (two's complement, 0.5 dB steps).
   void add(uint64_t time_ms, uint8_t raw);
-  /// Strongest sample between `from_ms` and `to_ms` (inclusive).
+  /// A sample taken while no frame was being received.
+  void add_floor(uint8_t raw);
+  /// Strongest frame sample between `from_ms` and `to_ms` (inclusive).
   bool peak(uint64_t from_ms, uint64_t to_ms, int16_t &dbm) const;
-  /// Median of the samples since the last reset_floor(), in dBm. Frames take a
-  /// small part of the time, so the median is the noise floor.
+  /// Median of the floor samples since the last reset_floor(), in dBm.
   bool noise_floor(float &dbm) const;
   void reset_floor();
 
   static float raw_to_dbm(uint8_t raw);
 
  protected:
-  // Separate arrays keep this at 5 kB; times are the low 32 bits of the uptime.
+  // Times are the low 32 bits of the uptime.
   uint32_t times_[SAMPLES]{};
   uint8_t raws_[SAMPLES]{};
   size_t next_{0};

@@ -45,7 +45,7 @@ void RepeatAggregator::finish_(Entry &entry, std::vector<Line> &out) {
   entry = Entry{};
 }
 
-void RepeatAggregator::add(const Decoded &decoded, uint64_t time_ms, bool has_rssi, int16_t rssi_dbm,
+void RepeatAggregator::add(const Decoded &decoded, uint64_t start_ms, uint64_t end_ms, bool has_rssi, int16_t rssi_dbm,
                            std::vector<Line> &out) {
   Entry *same_sender = nullptr;
   for (auto &entry : this->entries_) {
@@ -57,17 +57,18 @@ void RepeatAggregator::add(const Decoded &decoded, uint64_t time_ms, bool has_rs
   if (same_sender != nullptr) {
     if (same_sender->line.fields == decoded.fields) {
       Line &line = same_sender->line;
-      const uint64_t gap = time_ms >= same_sender->last_ms ? time_ms - same_sender->last_ms : 0;
+      const uint64_t gap = start_ms >= same_sender->last_start_ms ? start_ms - same_sender->last_start_ms : 0;
       if (gap > line.max_gap_ms)
         line.max_gap_ms = static_cast<uint32_t>(gap);
-      line.span_ms = static_cast<uint32_t>(time_ms >= line.first_ms ? time_ms - line.first_ms : 0);
+      line.span_ms = static_cast<uint32_t>(start_ms >= line.first_ms ? start_ms - line.first_ms : 0);
       if (line.repeats < UINT16_MAX)
         line.repeats++;
       if (has_rssi && (!line.has_rssi || rssi_dbm > line.rssi_dbm)) {
         line.has_rssi = true;
         line.rssi_dbm = rssi_dbm;
       }
-      same_sender->last_ms = time_ms;
+      same_sender->last_start_ms = start_ms;
+      same_sender->last_end_ms = end_ms;
       return;
     }
     // Same sender with new data: its previous transmission is complete.
@@ -85,19 +86,20 @@ void RepeatAggregator::add(const Decoded &decoded, uint64_t time_ms, bool has_rs
     // Table full: end the line that has waited longest.
     slot = &this->entries_[0];
     for (auto &entry : this->entries_) {
-      if (entry.last_ms < slot->last_ms)
+      if (entry.last_end_ms < slot->last_end_ms)
         slot = &entry;
     }
     this->finish_(*slot, out);
   }
   slot->used = true;
   slot->sender = decoded.sender;
-  slot->last_ms = time_ms;
+  slot->last_start_ms = start_ms;
+  slot->last_end_ms = end_ms;
   slot->line = Line{};
   slot->line.decoder = decoded.decoder;
   slot->line.fields = decoded.fields;
   slot->line.quality = decoded.quality;
-  slot->line.first_ms = time_ms;
+  slot->line.first_ms = start_ms;
   slot->line.repeats = 1;
   slot->line.has_rssi = has_rssi;
   slot->line.rssi_dbm = rssi_dbm;
@@ -108,7 +110,7 @@ void RepeatAggregator::poll(uint64_t now_ms, uint32_t max_wait_ms, std::vector<L
   while (true) {
     Entry *oldest = nullptr;
     for (auto &entry : this->entries_) {
-      if (entry.used && now_ms >= entry.last_ms && now_ms - entry.last_ms >= max_wait_ms &&
+      if (entry.used && now_ms >= entry.last_end_ms && now_ms - entry.last_end_ms >= max_wait_ms &&
           (oldest == nullptr || entry.line.first_ms < oldest->line.first_ms))
         oldest = &entry;
     }
@@ -159,6 +161,40 @@ size_t OregonSniffer::decode(const std::vector<int32_t> &raw, std::vector<Decode
   return out.size() - before;
 }
 
+// Reason keys for the log, one word each so the line stays key=value.
+static const char *reason_key(ParseResult result) {
+  switch (result) {
+    case ParseResult::TOO_SHORT:
+      return "too_short";
+    case ParseResult::BAD_SYNC:
+      return "bad_sync";
+    case ParseResult::UNKNOWN_TYPE:
+      return "unknown_type";
+    case ParseResult::BAD_CHECKSUM:
+      return "bad_checksum";
+    case ParseResult::BAD_VALUE:
+      return "bad_value";
+    case ParseResult::OK:
+      break;
+  }
+  return "ok";
+}
+
+// A found message that failed its checks. The nibbles identify identical copies.
+static Decoded rejected_message(const uint8_t *data, size_t len, const char *reason, uint16_t pair_errors,
+                                const std::string &quality) {
+  std::string nibbles;
+  for (size_t i = 0; i < len * 2; i++)
+    nibbles += "0123456789ABCDEF"[oregon_nibble(data, i)];
+  Decoded d;
+  d.decoder = Decoder::OREGON;
+  d.rejected = true;
+  d.sender = "rejected:" + nibbles;
+  d.fields = format("rejected reason=%s nibbles=%s", reason, nibbles.c_str());
+  d.quality = quality + format(" pair_errors=%u", pair_errors);
+  return d;
+}
+
 bool OregonSniffer::handle_message_(std::vector<Decoded> &out) {
   const uint8_t *data = this->decoder_.data();
   const size_t len = this->decoder_.size();
@@ -175,11 +211,13 @@ bool OregonSniffer::handle_message_(std::vector<Decoded> &out) {
     UnknownOregonMessage msg;
     if (!parse_unknown_oregon_v21(data, len, msg)) {
       this->rejected_++;
+      out.push_back(rejected_message(data, len, "no_checksum", this->decoder_.pair_errors(len), quality));
       return false;
     }
     const uint16_t pair_errors = this->decoder_.pair_errors(msg.used_bytes);
     if (pair_errors > 0 && this->verify_bit_pairs_) {
       this->rejected_++;
+      out.push_back(rejected_message(data, msg.used_bytes, "pair_errors", pair_errors, quality));
       return false;
     }
     std::string nibbles;
@@ -203,8 +241,14 @@ bool OregonSniffer::handle_message_(std::vector<Decoded> &out) {
 
   const size_t checked_bytes = reading.used_bytes != 0 ? reading.used_bytes : len;
   const uint16_t pair_errors = this->decoder_.pair_errors(checked_bytes);
-  if ((pair_errors > 0 && this->verify_bit_pairs_) || result != ParseResult::OK) {
+  if (pair_errors > 0 && this->verify_bit_pairs_) {
     this->rejected_++;
+    out.push_back(rejected_message(data, checked_bytes, "pair_errors", pair_errors, quality));
+    return false;
+  }
+  if (result != ParseResult::OK) {
+    this->rejected_++;
+    out.push_back(rejected_message(data, checked_bytes, reason_key(result), pair_errors, quality));
     return false;
   }
 
@@ -236,6 +280,9 @@ void RssiTracker::add(uint64_t time_ms, uint8_t raw) {
   this->next_ = (this->next_ + 1) % SAMPLES;
   if (this->count_ < SAMPLES)
     this->count_++;
+}
+
+void RssiTracker::add_floor(uint8_t raw) {
   this->histogram_[static_cast<uint8_t>(static_cast<int8_t>(raw) + 128)]++;
   this->histogram_total_++;
 }
