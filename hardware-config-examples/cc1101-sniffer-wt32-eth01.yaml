@@ -59,6 +59,11 @@ esphome:
       - script.execute: apply_oregon
       - script.execute: apply_sniffer
 
+external_components:
+  # rf_sniffer from this repository (branch rf-sniffer until it is merged)
+  - source: github://boilerplate4u/esphome-cc1101-tools@rf-sniffer
+    components: [rf_sniffer]
+
 esp32:
   board: ${board}
   framework:
@@ -146,11 +151,6 @@ remote_receiver:
   receive_symbols: 448
   # Fixed floor against the shortest noise bursts, can only be changed at compile time
   filter_symbols: 20
-
-external_components:
-  # rf_sniffer from this repository (branch rf-sniffer until it is merged)
-  - source: github://boilerplate4u/esphome-cc1101-tools@rf-sniffer
-    components: [rf_sniffer]
 
 # One log line per transmission: time, decoder, decoded fields, RSSI, repeats.
 # Raw frames, decoder visibility and Oregon timing are set in the web UI.
