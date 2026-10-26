@@ -1,0 +1,7 @@
+/.esphome/
+/secrets.yaml
+**/.esphome/
+**/secrets.yaml
+/ci/
+/tests/build/
+__pycache__/

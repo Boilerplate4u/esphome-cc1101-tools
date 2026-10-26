@@ -1,0 +1,3 @@
+[lint.isort]
+force-sort-within-sections = true
+known-first-party = ["esphome"]

@@ -1,12 +1,17 @@
-# Raw dumps of 433 MHz OOK via CC1101 on an ESP32 board with WiFi
+# RF sniffer for 433 MHz OOK via CC1101 on an ESP32 board with WiFi
 #
 # Version: see substitutions.version below, also shown in the boot log
 #
 # Changelog
+#   1.2.0  2026-10-26  rf_sniffer: all decoders (Oregon v2.1 and the ESPHome RF protocols)
+#                      in one log line per transmission with time, RSSI and repeat count;
+#                      raw log off/unknown only/all; decoder switches; statistics; SNTP
 #   1.1.1  2026-10-25  No reboot without an API client, no timing warnings during setup
 #   1.1.0  2026-10-25  Oregon v2.1 decoder with runtime timing and bit pair check
 #   1.0.1  2026-10-25  Raw log is off by default
-#   1.0.0  2026-10-25  First versioned release, WiFi variant of the WT32-ETH01 example
+#   1.0.0  2026-10-25  First versioned release: raw frame log with uptime and gap,
+#                      runtime CC1101 tuning, RX filter and tolerance, web UI groups,
+#                      all entities internal (web UI only, never exposed to Home Assistant)
 #
 # Wiring CC1101 -> ESP32
 #   VCC   -> 3V3
@@ -21,7 +26,7 @@
 substitutions:
   name: cc1101-dumper-wifi
   friendly_name: CC1101 Dumper WiFi
-  version: "1.1.1"
+  version: "1.2.0"
 
 esphome:
   name: ${name}
@@ -32,10 +37,11 @@ esphome:
   on_boot:
     priority: -100
     then:
-      # Apply the stored radio and receiver settings after a restart
+      # Apply the stored settings after a restart
       - script.execute: apply_rf
       - script.execute: apply_rx
       - script.execute: apply_oregon
+      - script.execute: apply_sniffer
 
 esp32:
   board: esp32dev
@@ -56,6 +62,12 @@ api:
 ota:
   - platform: esphome
 
+# Wall clock for the log timestamps; without a sync they show the uptime
+time:
+  - platform: sntp
+    id: sntp_time
+    timezone: Europe/London
+
 web_server:
   port: 80
   version: 3
@@ -68,9 +80,15 @@ web_server:
     - id: grp_dump
       name: "Dump"
       sorting_weight: 20
-    - id: grp_decoder
-      name: "Oregon v2.1 decoder"
+    - id: grp_decoders
+      name: "Decoders"
       sorting_weight: 30
+    - id: grp_oregon
+      name: "Oregon v2.1 decoder"
+      sorting_weight: 40
+    - id: grp_stats
+      name: "Statistics"
+      sorting_weight: 50
 
 spi:
   clk_pin: GPIO14
@@ -88,50 +106,67 @@ cc1101:
 remote_receiver:
   id: rx
   pin: GPIO36
-  # No dump here, logging is done in on_raw with a runtime filter
   idle: 5ms
   # filter and tolerance are start values, then controlled by RX filter and RX tolerance
   filter: 100us
   tolerance: 35%
-  # The classic ESP32 has 512 RMT symbols shared between RX and TX
-  # 384 for RX leaves 128 for a later remote_transmitter
-  rmt_symbols: 384
-  receive_symbols: 384
+  # The classic ESP32 has 512 RMT symbols shared between RX and TX.
+  # 448 for RX holds frames of about 890 pulses and leaves 64 for a later remote_transmitter.
+  rmt_symbols: 448
+  receive_symbols: 448
   # Fixed floor against the shortest noise bursts, can only be changed at compile time
   filter_symbols: 20
-  on_raw:
-    then:
-      - lambda: |-
-          // Time and gap are tracked for every frame, also the ones filtered out
-          static uint32_t last_ms = 0;
-          const uint32_t now_ms = millis();
-          const uint32_t gap_ms = last_ms ? now_ms - last_ms : 0;
-          last_ms = now_ms;
-          if (!id(raw_log).state) return;
-          const size_t n = x.size();
-          if (n < (size_t) id(min_pulses).state) return;
-          ESP_LOGD("rawdump", "Raw frame, %u pulses, t=%u.%03u s, gap=%u ms:", (unsigned) n,
-                   (unsigned) (now_ms / 1000), (unsigned) (now_ms % 1000), (unsigned) gap_ms);
-          std::string line;
-          for (size_t i = 0; i < n; i++) {
-            char buf[12];
-            snprintf(buf, sizeof(buf), "%ld, ", (long) x[i]);
-            line += buf;
-            if ((i + 1) % 16 == 0 || i + 1 == n) {
-              ESP_LOGD("rawdump", "  %s", line.c_str());
-              line.clear();
-            }
-          }
 
 external_components:
-  - source: github://boilerplate4u/oregon_v21_receiver@main
-    components: [oregon_v21_receiver]
+  # rf_sniffer from this repository (branch rf-sniffer until it is merged)
+  - source: github://boilerplate4u/esphome-cc1101-tools@rf-sniffer
+    components: [rf_sniffer]
 
-# Oregon Scientific v2.1 decoder, prints every decoded message in the log
-# No devices are configured, so no sensors are created
-oregon_v21_receiver:
-  id: oregon
+# One log line per transmission: time, decoder, decoded fields, RSSI, repeats.
+# Raw frames, decoder visibility and Oregon timing are set in the web UI.
+rf_sniffer:
+  id: sniffer
   receiver_id: rx
+  cc1101_id: radio
+  time_id: sntp_time
+  update_interval: 60s
+  statistics:
+    frames:
+      name: "Frames"
+      internal: true
+      web_server:
+        sorting_group_id: grp_stats
+        sorting_weight: 10
+    decoded:
+      name: "Decoded frames"
+      internal: true
+      web_server:
+        sorting_group_id: grp_stats
+        sorting_weight: 20
+    unknown:
+      name: "Unknown frames"
+      internal: true
+      web_server:
+        sorting_group_id: grp_stats
+        sorting_weight: 30
+    noise_per_minute:
+      name: "Noise frames per minute"
+      internal: true
+      web_server:
+        sorting_group_id: grp_stats
+        sorting_weight: 40
+    noise_floor:
+      name: "Noise floor"
+      internal: true
+      web_server:
+        sorting_group_id: grp_stats
+        sorting_weight: 50
+    per_protocol:
+      name: "Decoded per protocol"
+      internal: true
+      web_server:
+        sorting_group_id: grp_stats
+        sorting_weight: 60
 
 number:
   - platform: template
@@ -150,6 +185,8 @@ number:
     step: 1
     mode: box
     entity_category: config
+    on_value:
+      - lambda: id(sniffer).set_min_pulses((uint32_t) x);
 
   - platform: template
     id: rx_filter
@@ -192,13 +229,33 @@ number:
     on_value:
       - script.execute: apply_rx
 
+  - platform: template
+    id: max_repeat_wait
+    internal: true
+    name: "Max repeat wait"
+    web_server:
+      sorting_group_id: grp_decoders
+      sorting_weight: 5
+    icon: mdi:timer-outline
+    unit_of_measurement: ms
+    optimistic: true
+    restore_value: true
+    initial_value: 500
+    min_value: 100
+    max_value: 2000
+    step: 50
+    mode: box
+    entity_category: config
+    on_value:
+      - lambda: id(sniffer).set_max_repeat_wait((uint32_t) x);
+
   # Oregon v2.1 decoder timing, applied together by apply_oregon
   # Defaults match the decoder, except Min preamble (20 instead of 24, see README)
   - platform: template
     id: ore_min_pulse
     internal: true
     web_server:
-      sorting_group_id: grp_decoder
+      sorting_group_id: grp_oregon
       sorting_weight: 20
     name: "Min pulse"
     icon: mdi:arrow-collapse-left
@@ -218,7 +275,7 @@ number:
     id: ore_long_pulse
     internal: true
     web_server:
-      sorting_group_id: grp_decoder
+      sorting_group_id: grp_oregon
       sorting_weight: 30
     name: "Long pulse from"
     icon: mdi:arrow-split-vertical
@@ -238,7 +295,7 @@ number:
     id: ore_max_pulse
     internal: true
     web_server:
-      sorting_group_id: grp_decoder
+      sorting_group_id: grp_oregon
       sorting_weight: 40
     name: "Max pulse"
     icon: mdi:arrow-collapse-right
@@ -258,7 +315,7 @@ number:
     id: ore_end_gap
     internal: true
     web_server:
-      sorting_group_id: grp_decoder
+      sorting_group_id: grp_oregon
       sorting_weight: 50
     name: "End gap"
     icon: mdi:timer-sand
@@ -278,7 +335,7 @@ number:
     id: ore_min_preamble
     internal: true
     web_server:
-      sorting_group_id: grp_decoder
+      sorting_group_id: grp_oregon
       sorting_weight: 60
     name: "Min preamble"
     icon: mdi:ray-start-arrow
@@ -294,24 +351,189 @@ number:
     on_value:
       - script.execute: apply_oregon
 
+
 switch:
   - platform: template
-    id: raw_log
+    id: oregon_visible
     internal: true
+    name: "Oregon v2.1"
     web_server:
-      sorting_group_id: grp_dump
+      sorting_group_id: grp_decoders
       sorting_weight: 10
-    name: "Raw log"
-    icon: mdi:text-box-outline
+    icon: mdi:eye-outline
     optimistic: true
-    restore_mode: RESTORE_DEFAULT_OFF
+    restore_mode: RESTORE_DEFAULT_ON
     entity_category: config
+    on_turn_on:
+      - lambda: id(sniffer).set_decoder_visible(rf_sniffer::Decoder::OREGON, true);
+    on_turn_off:
+      - lambda: id(sniffer).set_decoder_visible(rf_sniffer::Decoder::OREGON, false);
+
+  - platform: template
+    id: nexa_visible
+    internal: true
+    name: "Nexa"
+    web_server:
+      sorting_group_id: grp_decoders
+      sorting_weight: 20
+    icon: mdi:eye-outline
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    entity_category: config
+    on_turn_on:
+      - lambda: id(sniffer).set_decoder_visible(rf_sniffer::Decoder::NEXA, true);
+    on_turn_off:
+      - lambda: id(sniffer).set_decoder_visible(rf_sniffer::Decoder::NEXA, false);
+
+  - platform: template
+    id: keeloq_visible
+    internal: true
+    name: "KeeLoq"
+    web_server:
+      sorting_group_id: grp_decoders
+      sorting_weight: 30
+    icon: mdi:eye-outline
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    entity_category: config
+    on_turn_on:
+      - lambda: id(sniffer).set_decoder_visible(rf_sniffer::Decoder::KEELOQ, true);
+    on_turn_off:
+      - lambda: id(sniffer).set_decoder_visible(rf_sniffer::Decoder::KEELOQ, false);
+
+  - platform: template
+    id: dooya_visible
+    internal: true
+    name: "Dooya"
+    web_server:
+      sorting_group_id: grp_decoders
+      sorting_weight: 40
+    icon: mdi:eye-outline
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    entity_category: config
+    on_turn_on:
+      - lambda: id(sniffer).set_decoder_visible(rf_sniffer::Decoder::DOOYA, true);
+    on_turn_off:
+      - lambda: id(sniffer).set_decoder_visible(rf_sniffer::Decoder::DOOYA, false);
+
+  - platform: template
+    id: drayton_visible
+    internal: true
+    name: "Drayton Digistat"
+    web_server:
+      sorting_group_id: grp_decoders
+      sorting_weight: 50
+    icon: mdi:eye-outline
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    entity_category: config
+    on_turn_on:
+      - lambda: id(sniffer).set_decoder_visible(rf_sniffer::Decoder::DRAYTON, true);
+    on_turn_off:
+      - lambda: id(sniffer).set_decoder_visible(rf_sniffer::Decoder::DRAYTON, false);
+
+  - platform: template
+    id: byronsx_visible
+    internal: true
+    name: "Byron SX"
+    web_server:
+      sorting_group_id: grp_decoders
+      sorting_weight: 60
+    icon: mdi:eye-outline
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    entity_category: config
+    on_turn_on:
+      - lambda: id(sniffer).set_decoder_visible(rf_sniffer::Decoder::BYRONSX, true);
+    on_turn_off:
+      - lambda: id(sniffer).set_decoder_visible(rf_sniffer::Decoder::BYRONSX, false);
+
+  - platform: template
+    id: brennenstuhl_visible
+    internal: true
+    name: "Brennenstuhl"
+    web_server:
+      sorting_group_id: grp_decoders
+      sorting_weight: 70
+    icon: mdi:eye-outline
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    entity_category: config
+    on_turn_on:
+      - lambda: id(sniffer).set_decoder_visible(rf_sniffer::Decoder::BRENNENSTUHL, true);
+    on_turn_off:
+      - lambda: id(sniffer).set_decoder_visible(rf_sniffer::Decoder::BRENNENSTUHL, false);
+
+  - platform: template
+    id: nexus_visible
+    internal: true
+    name: "Nexus (ESPHome dev)"
+    web_server:
+      sorting_group_id: grp_decoders
+      sorting_weight: 80
+    icon: mdi:eye-outline
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    entity_category: config
+    on_turn_on:
+      - lambda: id(sniffer).set_decoder_visible(rf_sniffer::Decoder::NEXUS, true);
+    on_turn_off:
+      - lambda: id(sniffer).set_decoder_visible(rf_sniffer::Decoder::NEXUS, false);
+
+  - platform: template
+    id: aok_visible
+    internal: true
+    name: "A-OK (ESPHome dev)"
+    web_server:
+      sorting_group_id: grp_decoders
+      sorting_weight: 90
+    icon: mdi:eye-outline
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    entity_category: config
+    on_turn_on:
+      - lambda: id(sniffer).set_decoder_visible(rf_sniffer::Decoder::AOK, true);
+    on_turn_off:
+      - lambda: id(sniffer).set_decoder_visible(rf_sniffer::Decoder::AOK, false);
+
+  - platform: template
+    id: cardin_s438_visible
+    internal: true
+    name: "Cardin S438 (ESPHome dev)"
+    web_server:
+      sorting_group_id: grp_decoders
+      sorting_weight: 100
+    icon: mdi:eye-outline
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    entity_category: config
+    on_turn_on:
+      - lambda: id(sniffer).set_decoder_visible(rf_sniffer::Decoder::CARDIN_S438, true);
+    on_turn_off:
+      - lambda: id(sniffer).set_decoder_visible(rf_sniffer::Decoder::CARDIN_S438, false);
+
+  - platform: template
+    id: rc_switch_visible
+    internal: true
+    name: "rc_switch"
+    web_server:
+      sorting_group_id: grp_decoders
+      sorting_weight: 110
+    icon: mdi:eye-outline
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    entity_category: config
+    on_turn_on:
+      - lambda: id(sniffer).set_decoder_visible(rf_sniffer::Decoder::RC_SWITCH, true);
+    on_turn_off:
+      - lambda: id(sniffer).set_decoder_visible(rf_sniffer::Decoder::RC_SWITCH, false);
 
   - platform: template
     id: ore_verify_bit_pairs
     internal: true
     web_server:
-      sorting_group_id: grp_decoder
+      sorting_group_id: grp_oregon
       sorting_weight: 10
     name: "Verify bit pairs"
     icon: mdi:check-decagram-outline
@@ -319,11 +541,33 @@ switch:
     restore_mode: RESTORE_DEFAULT_ON
     entity_category: config
     turn_on_action:
-      - lambda: id(oregon).set_verify_bit_pairs(true);
+      - lambda: id(sniffer).set_oregon_verify_bit_pairs(true);
     turn_off_action:
-      - lambda: id(oregon).set_verify_bit_pairs(false);
+      - lambda: id(sniffer).set_oregon_verify_bit_pairs(false);
 
 script:
+  - id: apply_sniffer
+    mode: queued
+    then:
+      - lambda: |-
+          auto *s = id(sniffer);
+          s->set_raw_mode_index(id(raw_log).active_index().value_or(0));
+          if (!std::isnan(id(min_pulses).state))
+            s->set_min_pulses((uint32_t) id(min_pulses).state);
+          if (!std::isnan(id(max_repeat_wait).state))
+            s->set_max_repeat_wait((uint32_t) id(max_repeat_wait).state);
+          s->set_decoder_visible(rf_sniffer::Decoder::OREGON, id(oregon_visible).state);
+          s->set_decoder_visible(rf_sniffer::Decoder::NEXA, id(nexa_visible).state);
+          s->set_decoder_visible(rf_sniffer::Decoder::KEELOQ, id(keeloq_visible).state);
+          s->set_decoder_visible(rf_sniffer::Decoder::DOOYA, id(dooya_visible).state);
+          s->set_decoder_visible(rf_sniffer::Decoder::DRAYTON, id(drayton_visible).state);
+          s->set_decoder_visible(rf_sniffer::Decoder::BYRONSX, id(byronsx_visible).state);
+          s->set_decoder_visible(rf_sniffer::Decoder::BRENNENSTUHL, id(brennenstuhl_visible).state);
+          s->set_decoder_visible(rf_sniffer::Decoder::NEXUS, id(nexus_visible).state);
+          s->set_decoder_visible(rf_sniffer::Decoder::AOK, id(aok_visible).state);
+          s->set_decoder_visible(rf_sniffer::Decoder::CARDIN_S438, id(cardin_s438_visible).state);
+          s->set_decoder_visible(rf_sniffer::Decoder::RC_SWITCH, id(rc_switch_visible).state);
+
   - id: apply_oregon
     mode: queued
     then:
@@ -332,7 +576,7 @@ script:
           if (std::isnan(id(ore_min_pulse).state) || std::isnan(id(ore_long_pulse).state) ||
               std::isnan(id(ore_max_pulse).state) || std::isnan(id(ore_end_gap).state) ||
               std::isnan(id(ore_min_preamble).state)) return;
-          oregon_v21_receiver::ManchesterDecoder::Timing t;
+          rf_sniffer::ManchesterDecoder::Timing t;
           t.min_pulse_us = (uint32_t) id(ore_min_pulse).state;
           t.long_pulse_us = (uint32_t) id(ore_long_pulse).state;
           t.max_pulse_us = (uint32_t) id(ore_max_pulse).state;
@@ -341,11 +585,11 @@ script:
           // Same rule as the decoder's own config validation
           if (!(t.min_pulse_us < t.long_pulse_us && t.long_pulse_us < t.max_pulse_us &&
                 t.max_pulse_us < t.end_gap_us)) {
-            ESP_LOGW("oregon", "Timing ignored, must satisfy min < long < max < end gap");
+            ESP_LOGW("rf_sniffer", "Oregon timing ignored, must satisfy min < long < max < end gap");
             return;
           }
-          id(oregon).set_timing(t);
-          id(oregon).set_verify_bit_pairs(id(ore_verify_bit_pairs).state);
+          id(sniffer).set_oregon_timing(t);
+          id(sniffer).set_oregon_verify_bit_pairs(id(ore_verify_bit_pairs).state);
 
   - id: apply_rx
     mode: queued
@@ -371,6 +615,23 @@ script:
           rf->set_magn_target(static_cast<cc1101::MagnTarget>(id(magn_target).active_index().value_or(7)));
 
 select:
+  - platform: template
+    id: raw_log
+    internal: true
+    web_server:
+      sorting_group_id: grp_dump
+      sorting_weight: 10
+    name: "Raw log"
+    icon: mdi:text-box-outline
+    optimistic: true
+    restore_value: true
+    initial_option: "Off"
+    # Same order as rf_sniffer::RawMode
+    options: ["Off", "Unknown only", "All"]
+    entity_category: config
+    on_value:
+      - lambda: id(sniffer).set_raw_mode_index(i);
+
   - platform: template
     id: rx_bandwidth
     internal: true
