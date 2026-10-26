@@ -46,6 +46,8 @@ class RfSniffer : public PollingComponent, public remote_base::RemoteReceiverLis
   void set_decoder_visible(Decoder decoder, bool visible);
   void set_oregon_timing(const ManchesterDecoder::Timing &timing) { this->oregon_.set_timing(timing); }
   void set_oregon_verify_bit_pairs(bool verify) { this->oregon_.set_verify_bit_pairs(verify); }
+  /// Zeroes the counters since boot and publishes them at once.
+  void reset_statistics();
 
 #ifdef USE_RF_SNIFFER_RSSI
   void set_radio(cc1101::CC1101Component *radio) { this->radio_ = radio; }

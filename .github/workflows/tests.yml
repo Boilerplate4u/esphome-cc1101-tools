@@ -18,6 +18,8 @@ jobs:
         run: tests/run_tests.sh
       - name: Vendored Oregon files match oregon_v21_receiver
         run: tools/check_vendored.sh
+      - name: Hardware variants match cc1101-sniffer.yaml
+        run: tools/check_variants.py
 
   lint:
     name: Formatting (clang-format, ruff)
@@ -30,8 +32,8 @@ jobs:
           clang-format --dry-run -Werror components/rf_sniffer/rf_sniffer.* components/rf_sniffer/sniffer_core.* tests/test_core.cpp
       - name: ruff
         run: |
-          pipx run ruff check components
-          pipx run ruff format --check components
+          pipx run ruff check components tools
+          pipx run ruff format --check components tools
 
   esphome-compile:
     name: ESPHome ${{ matrix.version.name }} (${{ matrix.config }})
@@ -40,7 +42,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        config: [cc1101-dumper-wt32-eth01, cc1101-dumper-esp32-wifi]
+        config: [cc1101-sniffer-wt32-eth01, cc1101-sniffer-esp32-wifi]
         version:
           - name: "2026.10.0 (oldest tested)"
             package: "esphome==2026.10.0"
@@ -70,10 +72,14 @@ jobs:
           mkdir -p ci
           # Build the checked out component instead of the published one.
           sed "s#  - source: github://boilerplate4u/esphome-cc1101-tools@.*#  - source:\n      type: local\n      path: ../components#" \
-            "hardware-config-examples/${{ matrix.config }}.yaml" > ci/dumper.yaml
-          grep -q "type: local" ci/dumper.yaml
+            "hardware-config-examples/${{ matrix.config }}.yaml" > ci/sniffer.yaml
+          grep -q "type: local" ci/sniffer.yaml
           printf 'wifi_ssid: "ci"\nwifi_password: "ci-password"\n' > ci/secrets.yaml
       - name: Validate config
-        run: esphome config ci/dumper.yaml
+        run: esphome config ci/sniffer.yaml
       - name: Compile
-        run: esphome compile ci/dumper.yaml
+        run: esphome compile ci/sniffer.yaml
+      - name: Validate cc1101-dumper.yaml (no external components)
+        run: |
+          cp cc1101-dumper.yaml ci/dumper.yaml
+          esphome config ci/dumper.yaml

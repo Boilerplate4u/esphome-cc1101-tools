@@ -421,6 +421,17 @@ void RfSniffer::update() {
   this->rssi_.reset_floor();
 }
 
+void RfSniffer::reset_statistics() {
+  this->frames_ = 0;
+  this->decoded_ = 0;
+  this->unknown_ = 0;
+  for (auto &count : this->per_decoder_)
+    count = 0;
+  // update() publishes the zeroed values and starts a new noise interval.
+  this->update();
+  ESP_LOGI(TAG, "Statistics reset");
+}
+
 void RfSniffer::dump_config() {
   ESP_LOGCONFIG(TAG, "RF sniffer:");
   std::string available;
