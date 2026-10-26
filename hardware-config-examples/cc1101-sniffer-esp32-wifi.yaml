@@ -569,11 +569,21 @@ button:
     web_server:
       sorting_group_id: grp_stats
       sorting_weight: 70
-    icon: mdi:restart
+    icon: mdi:counter
     entity_category: config
     # Zero the counters since boot, for example to compare before and after a setting change
     on_press:
       - lambda: id(sniffer).reset_statistics();
+
+  - platform: restart
+    id: restart_device
+    internal: true
+    name: "Restart device"
+    web_server:
+      sorting_group_id: grp_stats
+      sorting_weight: 80
+    icon: mdi:power-cycle
+    entity_category: config
 
 script:
   - id: apply_sniffer
