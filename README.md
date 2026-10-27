@@ -12,7 +12,7 @@ Once you've optimized the receiver settings, identified the appropriate decoder,
 
 Everything is built and installed using the standard ESPHome Device Builder in Home Assistant. Note that no entities are created and nothing is exposed to Home Assistant. This is purely a live diagnostic and tuning tool. If you want to save data for later analysis, simply capture the log output to a file.
 
-Ready-to-use configurations for WT32-ETH01 and standard ESP32 boards are in the Hardware Guide.
+Ready-to-use configurations are in `docs/`: [WT32-ETH01](docs/cc1101-sniffer-wt32-eth01.yaml) and [ESP32 with Wi-Fi](docs/cc1101-sniffer-esp32-wifi.yaml).
 
 ## Defaults and radio profiles
 
@@ -156,14 +156,14 @@ These values cannot be changed in the web UI, because they are built into the fi
 
 ## Quick start
 
-1. In ESPHome Device Builder in Home Assistant, add `cc1101-sniffer.yaml` or the configuration for your board from the Hardware Guide and install it.
+1. In ESPHome Device Builder in Home Assistant, add `cc1101-sniffer.yaml` or the configuration for your board ([WT32-ETH01](docs/cc1101-sniffer-wt32-eth01.yaml) or [ESP32 with Wi-Fi](docs/cc1101-sniffer-esp32-wifi.yaml)) and install it.
 2. Open `http://<device name>.local/` to change CC1101 settings and view log output in real time.
 
 Requires ESPHome 2026.10.0 or later.
 
 ## Hardware
 
-Tested on a WT32-ETH01 (Ethernet) and on an ESP32 NodeMCU, though any ESP32 should work. Wiring examples, antenna and board configurations are in the Hardware Guide.
+Tested on a WT32-ETH01 (Ethernet) and on an ESP32 NodeMCU, though any ESP32 should work. The wiring for each board is in the header of its configuration: [WT32-ETH01](docs/cc1101-sniffer-wt32-eth01.yaml) or [ESP32 with Wi-Fi](docs/cc1101-sniffer-esp32-wifi.yaml).
 
 ## License and status
 

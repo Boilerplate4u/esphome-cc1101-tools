@@ -50,7 +50,7 @@ The values named here are explained in the sections further down.
 
 | Symptom | Try first | Then |
 | --- | --- | --- |
-| Frames stays at 0 | Check the boot log for the CC1101 and its chip ID ([compile-time values](#values-that-can-only-be-set-at-compile-time)) | Check the wiring and the pins against the Hardware Guide |
+| Frames stays at 0 | Check the boot log for the CC1101 and its chip ID ([compile-time values](#values-that-can-only-be-set-at-compile-time)) | Check the wiring and the pins against the header of your board configuration ([WT32-ETH01](cc1101-sniffer-wt32-eth01.yaml) or [ESP32 with Wi-Fi](cc1101-sniffer-esp32-wifi.yaml)) |
 | No line at all when the device sends | Set Raw log to All and check that captures arrive ([Raw log](#raw-log)) | Radio profile Sensitive, check `frequency` ([CC1101 Radio and receiver](#cc1101-radio-and-receiver-settings), [compile-time values](#values-that-can-only-be-set-at-compile-time)) |
 | The device shows up as `unknown` | RX tolerance higher ([CC1101 Radio and receiver](#cc1101-radio-and-receiver-settings)) | Check that a decoder exists for it ([Decoders](#decoders)); study it with Raw log Unknown only |
 | Many false or broken captures | Radio profile Noise hunting ([CC1101 Radio and receiver](#cc1101-radio-and-receiver-settings)) | Max DVGA gain lower, OOK decision boundary higher |
@@ -280,8 +280,8 @@ These values are built into the firmware, so they cannot be changed while the de
 | `name`, `friendly_name` | `substitutions` | Text (cc1101-sniffer, CC1101 Sniffer) | The name of the device in ESPHome Device Builder, on the network (`<name>.local`) and in the web UI |
 | `board` | `substitutions` | ESP32 board name (wt32-eth01) | Tells ESPHome which ESP32 board you use, for example `wt32-eth01` or `esp32dev` |
 | `frequency` | `substitutions` | CC1101 bands, for example 433.92 or 868.3 MHz (433.92 MHz) | The radio frequency the receiver listens on |
-| `spi_clk_pin`, `spi_mosi_pin`, `spi_miso_pin`, `cc1101_cs_pin` | `substitutions` | GPIO (general purpose input/output) pins (see the Hardware Guide) | The pins for the SPI (serial peripheral interface) bus that the ESP32 uses to configure the CC1101 |
-| `rx_pin` | `substitutions` | GPIO pin (GPIO36 in both example configurations) | The pin connected to the CC1101 data output (GDO2, general digital output 2), where the received pulses arrive |
+| `spi_clk_pin`, `spi_mosi_pin`, `spi_miso_pin`, `cc1101_cs_pin` | `substitutions` | GPIO (general purpose input/output) pins (see the wiring in [WT32-ETH01](cc1101-sniffer-wt32-eth01.yaml) or [ESP32 with Wi-Fi](cc1101-sniffer-esp32-wifi.yaml)) | The pins for the SPI (serial peripheral interface) bus that the ESP32 uses to configure the CC1101 |
+| `rx_pin` | `substitutions` | GPIO pin (GPIO36 in [WT32-ETH01](cc1101-sniffer-wt32-eth01.yaml) and [ESP32 with Wi-Fi](cc1101-sniffer-esp32-wifi.yaml)) | The pin connected to the CC1101 data output (GDO2, general digital output 2), where the received pulses arrive |
 | `activity_pin` | `rf_sniffer` | Same pin as `rx_pin` | Lets the firmware see when a capture is being received, so RSSI is read only then |
 | `rx_symbols` | `substitutions` | 64 to 512, even numbers (448) | The size of the receive buffer; 448 symbols hold about 896 pulses |
 | `idle` | `remote_receiver` | Time (5 ms) | How long the signal must be silent before a capture ends |

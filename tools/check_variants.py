@@ -13,7 +13,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parent.parent
 CONFIG = "cc1101-sniffer.yaml"
-VARIANTS = sorted((ROOT / "hardware-config-examples").glob("cc1101-sniffer-*.yaml"))
+VARIANTS = sorted((ROOT / "docs").glob("cc1101-sniffer-*.yaml"))
 SKIPPED_BLOCKS = ("substitutions:", "ethernet:", "wifi:")
 
 
