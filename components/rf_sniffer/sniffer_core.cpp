@@ -199,7 +199,8 @@ bool OregonSniffer::handle_message_(std::vector<Decoded> &out) {
   const uint8_t *data = this->decoder_.data();
   const size_t len = this->decoder_.size();
   const auto &stats = this->decoder_.pulse_stats();
-  const std::string quality = format("short=%" PRIu32 " long=%" PRIu32, stats.short_avg_us(), stats.long_avg_us());
+  const std::string quality =
+      format("short_us=%" PRIu32 " long_us=%" PRIu32, stats.short_avg_us(), stats.long_avg_us());
 
   OregonReading reading;
   const ParseResult result = parse_oregon_v21(data, len, reading);
@@ -330,6 +331,58 @@ void RssiTracker::reset_floor() {
   for (auto &h : this->histogram_)
     h = 0;
   this->histogram_total_ = 0;
+}
+
+// ---------------------------------------------------------------------------
+// Signal and line formatting
+
+int signal_grade(float snr_db) {
+  if (snr_db >= 25.0f)
+    return 5;
+  if (snr_db >= 18.0f)
+    return 4;
+  if (snr_db >= 12.0f)
+    return 3;
+  if (snr_db >= 6.0f)
+    return 2;
+  return 1;
+}
+
+std::string format_signal(bool has_rssi, int16_t rssi_dbm, bool has_floor, float floor_dbm) {
+  if (!has_rssi)
+    return std::string();
+  if (!has_floor)
+    return format("rssi_dbm=%d", rssi_dbm);
+  const float snr = static_cast<float>(rssi_dbm) - floor_dbm;
+  const int snr_db = static_cast<int>(snr >= 0 ? snr + 0.5f : snr - 0.5f);
+  return format("signal_grade=%d (snr_db=%d, rssi_dbm=%d)", signal_grade(snr), snr_db, rssi_dbm);
+}
+
+std::string format_line(const Line &line, bool has_floor, float floor_dbm) {
+  std::string text = std::string(decoder_name(line.decoder)) + " " + line.fields;
+  if (!line.quality.empty())
+    text += " " + line.quality;
+  const std::string signal = format_signal(line.has_rssi, line.rssi_dbm, has_floor, floor_dbm);
+  if (!signal.empty())
+    text += " " + signal;
+  text += " rep=" + std::to_string(line.repeats);
+  if (line.repeats > 1)
+    text += " span_ms=" + std::to_string(line.span_ms) + " max_gap_ms=" + std::to_string(line.max_gap_ms);
+  return text;
+}
+
+bool capture_truncated(size_t pulses, uint32_t receive_symbols) {
+  // Every RMT symbol holds two pulses; a full buffer gives about 2 * symbols
+  // pulses (a few less when the receiver filter merged short ones).
+  return receive_symbols != 0 && pulses + 4 >= size_t(receive_symbols) * 2;
+}
+
+std::string format_unknown(size_t pulses, uint64_t duration_ms, bool truncated, const std::string &signal) {
+  std::string text = format("unknown pulses=%u duration_ms=%" PRIu64 " truncated=%s", static_cast<unsigned>(pulses),
+                            duration_ms, truncated ? "yes" : "no");
+  if (!signal.empty())
+    text += " " + signal;
+  return text;
 }
 
 // ---------------------------------------------------------------------------

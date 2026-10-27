@@ -51,7 +51,7 @@ struct Decoded {
   std::string sender;
   /// The decoded fields as "key=value ...", also the key for repeats.
   std::string fields;
-  /// Extra quality fields that may differ between copies ("short=487 ...").
+  /// Extra quality fields that may differ between copies ("short_us=487 ...").
   /// Taken from the first copy.
   std::string quality;
   /// An Oregon message that was found but failed its checks (fields hold the reason).
@@ -149,6 +149,19 @@ class RssiTracker {
   uint32_t histogram_[256]{};
   uint32_t histogram_total_{0};
 };
+
+/// Signal grade 1..5 from the margin over the noise floor: 25, 18, 12 and 6 dB.
+int signal_grade(float snr_db);
+/// "signal_grade=2 (snr_db=7, rssi_dbm=-76)", "rssi_dbm=-76" without a noise
+/// floor, or empty without RSSI.
+std::string format_signal(bool has_rssi, int16_t rssi_dbm, bool has_floor, float floor_dbm);
+/// A decoded line without the timestamp: "nexa device=... signal_grade=... rep=5 span_ms=..."
+std::string format_line(const Line &line, bool has_floor, float floor_dbm);
+/// True when a capture filled the receiver buffer of `receive_symbols` RMT symbols
+/// (0: unknown, never truncated).
+bool capture_truncated(size_t pulses, uint32_t receive_symbols);
+/// "unknown pulses=897 duration_ms=910 truncated=yes signal_grade=1 (...)"
+std::string format_unknown(size_t pulses, uint64_t duration_ms, bool truncated, const std::string &signal);
 
 /// "HH:MM:SS.mmm" from local wall clock parts, or "up S.mmm" from the uptime.
 std::string format_wall_time(int hour, int minute, int second, int millisecond);

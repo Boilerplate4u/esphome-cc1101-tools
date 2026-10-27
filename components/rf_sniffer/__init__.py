@@ -28,6 +28,7 @@ CONF_ACTIVITY_PIN = "activity_pin"
 CONF_RAW_MODE = "raw_mode"
 CONF_MIN_PULSES = "min_pulses"
 CONF_MAX_REPEAT_WAIT = "max_repeat_wait"
+CONF_RECEIVE_SYMBOLS = "receive_symbols"
 CONF_OREGON = "oregon"
 CONF_MIN_PULSE = "min_pulse"
 CONF_LONG_PULSE = "long_pulse"
@@ -178,6 +179,9 @@ CONFIG_SCHEMA = cv.All(
                     min=cv.TimePeriod(milliseconds=100), max=cv.TimePeriod(seconds=2)
                 ),
             ),
+            # Same value as remote_receiver receive_symbols; marks captures that
+            # filled the buffer with truncated=yes. 0 disables the check.
+            cv.Optional(CONF_RECEIVE_SYMBOLS, default=0): cv.int_range(min=0, max=4096),
             cv.Optional(CONF_OREGON, default={}): OREGON_SCHEMA,
             cv.Optional(CONF_STATISTICS, default={}): STATISTICS_SCHEMA,
         }
@@ -221,6 +225,7 @@ async def to_code(config):
 
     cg.add(var.set_raw_mode(config[CONF_RAW_MODE]))
     cg.add(var.set_min_pulses(config[CONF_MIN_PULSES]))
+    cg.add(var.set_receive_symbols(config[CONF_RECEIVE_SYMBOLS]))
     cg.add(
         var.set_max_repeat_wait(int(config[CONF_MAX_REPEAT_WAIT].total_milliseconds))
     )

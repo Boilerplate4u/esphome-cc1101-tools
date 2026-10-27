@@ -403,11 +403,21 @@ bool RfSniffer::on_receive(remote_base::RemoteReceiveData data) {
     this->noise_interval_++;
   }
 
+  float floor_dbm = 0;
+  const bool has_floor = this->noise_floor_(floor_dbm);
+  const std::string signal = format_signal(has_rssi, rssi_dbm, has_floor, floor_dbm);
+  const bool truncated = capture_truncated(raw.size(), this->receive_symbols_);
+  if (!accepted && !oregon_rejected && raw.size() >= this->min_pulses_) {
+    ESP_LOGD(TAG, "%s - %s", this->timestamp_(start_ms).c_str(),
+             format_unknown(raw.size(), duration_ms, truncated, signal).c_str());
+  }
+
   // Raw dump: every frame, or the ones no decoder accepted (hidden decoders accept
   // too, rejected Oregon messages do not).
   if (raw.size() >= this->min_pulses_ &&
       (this->raw_mode_ == RawMode::ALL || (this->raw_mode_ == RawMode::UNKNOWN_ONLY && !accepted)))
-    this->log_raw_(raw, start_ms, has_rssi, rssi_dbm);
+    this->log_raw_(raw, start_ms,
+                   std::string(truncated ? "truncated=yes" : "truncated=no") + (signal.empty() ? "" : " " + signal));
   this->last_frame_ms_ = start_ms;
 
   // Hidden decoders claim their frames but are not logged.
@@ -421,18 +431,23 @@ bool RfSniffer::on_receive(remote_base::RemoteReceiveData data) {
   return accepted;
 }
 
-void RfSniffer::log_raw_(const std::vector<int32_t> &raw, uint64_t start_ms, bool has_rssi, int16_t rssi_dbm) {
+void RfSniffer::log_raw_(const std::vector<int32_t> &raw, uint64_t start_ms, const std::string &signal) {
   const uint64_t gap =
       this->last_frame_ms_ != 0 && start_ms >= this->last_frame_ms_ ? start_ms - this->last_frame_ms_ : 0;
-  const std::string ts = this->timestamp_(start_ms);
-  if (has_rssi) {
-    ESP_LOGD(TAG_RAW, "%s - raw pulses=%u gap=%" PRIu64 " rssi=%d", ts.c_str(), static_cast<unsigned>(raw.size()), gap,
-             rssi_dbm);
-  } else {
-    ESP_LOGD(TAG_RAW, "%s - raw pulses=%u gap=%" PRIu64, ts.c_str(), static_cast<unsigned>(raw.size()), gap);
-  }
+  ESP_LOGD(TAG_RAW, "%s - raw pulses=%u gap_ms=%" PRIu64 " %s", this->timestamp_(start_ms).c_str(),
+           static_cast<unsigned>(raw.size()), gap, signal.c_str());
   for (const auto &line : format_raw_lines(raw, RAW_VALUES_PER_LINE))
     ESP_LOGD(TAG_RAW, "  %s", line.c_str());
+}
+
+bool RfSniffer::noise_floor_(float &dbm) {
+  if (this->rssi_.noise_floor(dbm)) {
+    this->has_last_floor_ = true;
+    this->last_floor_dbm_ = dbm;
+    return true;
+  }
+  dbm = this->last_floor_dbm_;
+  return this->has_last_floor_;
 }
 
 void RfSniffer::log_line_(const Line &line) {
@@ -442,15 +457,9 @@ void RfSniffer::log_line_(const Line &line) {
              decoder_name(line.decoder), line.fields.c_str());
     return;
   }
-  std::string text = this->timestamp_(line.first_ms) + " - " + decoder_name(line.decoder) + " " + line.fields;
-  if (!line.quality.empty())
-    text += " " + line.quality;
-  if (line.has_rssi)
-    text += " rssi=" + std::to_string(line.rssi_dbm);
-  text += " rep=" + std::to_string(line.repeats);
-  if (line.repeats > 1)
-    text += " span=" + std::to_string(line.span_ms) + " max_gap=" + std::to_string(line.max_gap_ms);
-  ESP_LOGD(TAG, "%s", text.c_str());
+  float floor_dbm = 0;
+  const bool has_floor = this->noise_floor_(floor_dbm);
+  ESP_LOGD(TAG, "%s - %s", this->timestamp_(line.first_ms).c_str(), format_line(line, has_floor, floor_dbm).c_str());
 }
 
 void RfSniffer::update() {
@@ -468,7 +477,9 @@ void RfSniffer::update() {
   if (this->noise_per_minute_sensor_ != nullptr && interval_ms > 0)
     this->noise_per_minute_sensor_->publish_state(this->noise_interval_ * 60000.0f / interval_ms);
   float floor_dbm = 0;
-  if (this->noise_floor_sensor_ != nullptr && this->rssi_.noise_floor(floor_dbm))
+  // Always read before the reset below, so the last floor is kept for snr_db.
+  const bool has_floor = this->noise_floor_(floor_dbm);
+  if (this->noise_floor_sensor_ != nullptr && has_floor)
     this->noise_floor_sensor_->publish_state(floor_dbm);
 #endif
 #ifdef USE_TEXT_SENSOR
@@ -518,8 +529,8 @@ void RfSniffer::dump_config() {
                 " us, preamble %u, verify bit pairs %s",
                 t.min_pulse_us, t.max_pulse_us, t.long_pulse_us, t.end_gap_us, t.min_preamble,
                 YESNO(this->oregon_.get_verify_bit_pairs()));
-  ESP_LOGCONFIG(TAG, "  Max repeat wait: %" PRIu32 " ms, min pulses %" PRIu32, this->max_repeat_wait_ms_,
-                this->min_pulses_);
+  ESP_LOGCONFIG(TAG, "  Max repeat wait: %" PRIu32 " ms, min pulses %" PRIu32 ", receive symbols %" PRIu32,
+                this->max_repeat_wait_ms_, this->min_pulses_, this->receive_symbols_);
 #ifdef USE_RF_SNIFFER_RSSI
   if (this->radio_ == nullptr) {
     ESP_LOGCONFIG(TAG, "  RSSI: no");

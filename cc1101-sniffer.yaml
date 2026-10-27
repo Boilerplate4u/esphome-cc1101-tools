@@ -13,6 +13,11 @@
 # Version: see substitutions.version below, also shown in the boot log
 #
 # Changelog
+#   1.2.0  2026-10-27  Log fields carry their unit (rssi_dbm, span_ms, short_us ...);
+#                      signal_grade 1..5 from the margin over the noise floor;
+#                      a line for every unknown frame, truncated=yes when a capture
+#                      filled the buffer; Radio profile select (Standard, Sensitive,
+#                      Noise hunting, Custom)
 #   1.1.0  2026-10-26  RSSI read only a few times per frame while the data pin is high
 #                      (reading it every millisecond disturbed reception); rejected
 #                      Oregon messages are logged and not offered to other decoders;
@@ -34,7 +39,7 @@
 substitutions:
   name: cc1101-sniffer
   friendly_name: CC1101 Sniffer
-  version: "1.1.0"
+  version: "1.2.0"
   board: wt32-eth01
   timezone: Europe/London
   frequency: 433.92MHz
@@ -42,6 +47,8 @@ substitutions:
   spi_mosi_pin: GPIO15  # IO15
   spi_miso_pin: GPIO35  # IO35
   cc1101_cs_pin: GPIO4  # IO4
+  # RMT symbols for receiving, shared by remote_receiver and rf_sniffer
+  rx_symbols: "448"
   rx_pin: GPIO36        # IO36
 
 esphome:
@@ -58,6 +65,8 @@ esphome:
       - script.execute: apply_rx
       - script.execute: apply_oregon
       - script.execute: apply_sniffer
+      # From here on a change of a profile setting updates the Radio profile select
+      - lambda: id(boot_done) = true;
 
 external_components:
   # rf_sniffer from this repository (branch rf-sniffer until it is merged)
@@ -147,8 +156,8 @@ remote_receiver:
   tolerance: 35%
   # The classic ESP32 has 512 RMT symbols shared between RX and TX.
   # 448 for RX holds frames of about 890 pulses and leaves 64 for a later remote_transmitter.
-  rmt_symbols: 448
-  receive_symbols: 448
+  rmt_symbols: ${rx_symbols}
+  receive_symbols: ${rx_symbols}
   # Fixed floor against the shortest noise bursts, can only be changed at compile time
   filter_symbols: 20
 
@@ -158,6 +167,7 @@ rf_sniffer:
   id: sniffer
   receiver_id: rx
   cc1101_id: radio
+  receive_symbols: ${rx_symbols}
   # Same pin as remote_receiver: RSSI is read during frames while the pin is high
   activity_pin:
     number: ${rx_pin}
@@ -249,6 +259,7 @@ number:
     entity_category: config
     on_value:
       - script.execute: apply_rx
+      - script.execute: sync_profile
 
   - platform: template
     id: rx_tolerance
@@ -269,6 +280,7 @@ number:
     entity_category: config
     on_value:
       - script.execute: apply_rx
+      - script.execute: sync_profile
 
   - platform: template
     id: max_repeat_wait
@@ -609,7 +621,66 @@ button:
     icon: mdi:power-cycle
     entity_category: config
 
+globals:
+  - id: boot_done
+    type: bool
+    initial_value: "false"
+  # True while apply_profile writes the profile values, so sync_profile waits
+  - id: profile_applying
+    type: bool
+    initial_value: "false"
+  # Radio profiles in the order of the radio_profile options (without Custom):
+  # rx_bandwidth index, ook_threshold index, dvga_max index, RX filter us, RX tolerance %
+  #   Standard       203 kHz, 8 dB, DVGA -3, 100 us, 35 %  (verified 2026-10-26)
+  #   Sensitive      203 kHz, 4 dB, DVGA -2,  80 us, 40 %  (start values)
+  #   Noise hunting  162 kHz, 12 dB, DVGA -3, 150 us, 30 % (start values)
+  - id: radio_profiles
+    type: std::array<std::array<float, 5>, 3>
+    initial_value: "{{{7, 1, 3, 100, 35}, {7, 0, 2, 80, 40}, {6, 2, 3, 150, 30}}}"
+
 script:
+  # Writes the values of the selected profile into the radio settings
+  - id: apply_profile
+    mode: queued
+    then:
+      - lambda: |-
+          if (!id(boot_done)) return;  // after a restart the settings restore themselves
+          const auto index = id(radio_profile).active_index();
+          if (!index.has_value() || *index == 0) return;  // Custom keeps the current values
+          const auto &p = id(radio_profiles)[*index - 1];
+          id(profile_applying) = true;
+          auto set_select = [](select::Select *s, uint8_t i) {
+            if (s->active_index() != i) s->make_call().set_index(i).perform();
+          };
+          auto set_number = [](number::Number *n, float v) {
+            if (n->state != v) n->make_call().set_value(v).perform();
+          };
+          set_select(id(rx_bandwidth), (uint8_t) p[0]);
+          set_select(id(ook_threshold), (uint8_t) p[1]);
+          set_select(id(dvga_max), (uint8_t) p[2]);
+          set_number(id(rx_filter), p[3]);
+          set_number(id(rx_tolerance), p[4]);
+          id(profile_applying) = false;
+
+  # Shows Custom, or the profile that matches, after a single setting was changed
+  - id: sync_profile
+    mode: queued
+    then:
+      - lambda: |-
+          if (!id(boot_done) || id(profile_applying)) return;
+          size_t match = 0;  // Custom
+          for (size_t i = 0; i < id(radio_profiles).size(); i++) {
+            const auto &p = id(radio_profiles)[i];
+            if (id(rx_bandwidth).active_index() == (size_t) p[0] && id(ook_threshold).active_index() == (size_t) p[1] &&
+                id(dvga_max).active_index() == (size_t) p[2] && id(rx_filter).state == p[3] &&
+                id(rx_tolerance).state == p[4]) {
+              match = i + 1;
+              break;
+            }
+          }
+          if (id(radio_profile).active_index() != match)
+            id(radio_profile).make_call().set_index(match).perform();
+
   - id: apply_sniffer
     mode: queued
     then:
@@ -682,6 +753,23 @@ script:
 
 select:
   - platform: template
+    id: radio_profile
+    internal: true
+    web_server:
+      sorting_group_id: grp_radio
+      sorting_weight: 5
+    name: "Radio profile"
+    icon: mdi:tune
+    optimistic: true
+    restore_value: true
+    initial_option: "Standard"
+    # Same order as radio_profiles, Custom first
+    options: ["Custom", "Standard", "Sensitive", "Noise hunting"]
+    entity_category: config
+    on_value:
+      - script.execute: apply_profile
+
+  - platform: template
     id: raw_log
     internal: true
     web_server:
@@ -716,6 +804,7 @@ select:
     entity_category: config
     on_value:
       - script.execute: apply_rf
+      - script.execute: sync_profile
 
   # All lists below follow the enum order in cc1101defs.h
   # initial_option matches the ESPHome default
@@ -750,6 +839,7 @@ select:
     entity_category: config
     on_value:
       - script.execute: apply_rf
+      - script.execute: sync_profile
 
   - platform: template
     id: ook_hyst
@@ -798,6 +888,7 @@ select:
     entity_category: config
     on_value:
       - script.execute: apply_rf
+      - script.execute: sync_profile
 
   - platform: template
     id: magn_target

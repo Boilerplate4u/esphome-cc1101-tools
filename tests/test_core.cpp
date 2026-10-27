@@ -267,6 +267,45 @@ static void test_rssi() {
   CHECK(!rssi.noise_floor(floor_dbm));
 }
 
+static void test_signal_and_lines() {
+  CHECK(signal_grade(30) == 5 && signal_grade(25) == 5 && signal_grade(24.9f) == 4 && signal_grade(18) == 4);
+  CHECK(signal_grade(17) == 3 && signal_grade(12) == 3 && signal_grade(11) == 2 && signal_grade(6) == 2);
+  CHECK(signal_grade(5.9f) == 1 && signal_grade(-3) == 1);
+  CHECK(format_signal(true, -76, true, -83.0f) == "signal_grade=2 (snr_db=7, rssi_dbm=-76)");
+  CHECK(format_signal(true, -76, true, -83.5f) == "signal_grade=2 (snr_db=8, rssi_dbm=-76)");
+  CHECK(format_signal(true, -80, false, 0) == "rssi_dbm=-80");
+  CHECK(format_signal(false, 0, true, -83.0f).empty());
+
+  Line line;
+  line.decoder = Decoder::OREGON;
+  line.fields = "THGR122N/THGR228N type=1D20 channel=2";
+  line.quality = "short_us=488 long_us=975 pair_errors=0";
+  line.repeats = 2;
+  line.span_ms = 241;
+  line.max_gap_ms = 241;
+  line.has_rssi = true;
+  line.rssi_dbm = -76;
+  CHECK(format_line(line, true, -83.0f) ==
+        "oregon THGR122N/THGR228N type=1D20 channel=2 short_us=488 long_us=975 pair_errors=0 "
+        "signal_grade=2 (snr_db=7, rssi_dbm=-76) rep=2 span_ms=241 max_gap_ms=241");
+  line.repeats = 1;
+  line.has_rssi = false;
+  line.quality.clear();
+  CHECK(format_line(line, true, -83.0f) == "oregon THGR122N/THGR228N type=1D20 channel=2 rep=1");
+
+  CHECK(capture_truncated(897, 448) && capture_truncated(892, 448) && !capture_truncated(891, 448));
+  CHECK(!capture_truncated(5000, 0));
+  CHECK(format_unknown(897, 910, true, "signal_grade=1 (snr_db=3, rssi_dbm=-80)") ==
+        "unknown pulses=897 duration_ms=910 truncated=yes signal_grade=1 (snr_db=3, rssi_dbm=-80)");
+  CHECK(format_unknown(130, 76, false, "") == "unknown pulses=130 duration_ms=76 truncated=no");
+
+  // Oregon quality fields carry their units.
+  OregonSniffer oregon;
+  std::vector<Decoded> out;
+  std::vector<uint8_t> ok = {0x1A, 0x2D, 0x10, 0x7B, 0x10, 0x09, 0x80, 0xC9, 0x4A, 0xCC};
+  CHECK(oregon.decode(encode_v21(ok), out) == 1 && out[0].quality == "short_us=488 long_us=976 pair_errors=0");
+}
+
 static void test_format() {
   CHECK(format_wall_time(9, 40, 28, 859) == "09:40:28.859");
   CHECK(format_uptime(1234567) == "up 1234.567");
@@ -289,6 +328,7 @@ int main(int argc, char **argv) {
   test_oregon_rejected();
   test_repeats();
   test_rssi();
+  test_signal_and_lines();
   test_format();
   std::printf(failures == 0 ? "CORE TESTS PASSED\n" : "%d CORE FAILURES\n", failures);
   return failures == 0 ? 0 : 1;

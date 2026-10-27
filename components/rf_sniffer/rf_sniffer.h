@@ -43,6 +43,8 @@ class RfSniffer : public PollingComponent, public remote_base::RemoteReceiverLis
   void set_raw_mode_index(uint8_t index) { this->raw_mode_ = static_cast<RawMode>(index > 2 ? 0 : index); }
   void set_min_pulses(uint32_t min_pulses) { this->min_pulses_ = min_pulses; }
   void set_max_repeat_wait(uint32_t ms) { this->max_repeat_wait_ms_ = ms; }
+  /// remote_receiver receive_symbols, to mark captures that filled the buffer.
+  void set_receive_symbols(uint32_t symbols) { this->receive_symbols_ = symbols; }
   void set_decoder_visible(Decoder decoder, bool visible);
   void set_oregon_timing(const ManchesterDecoder::Timing &timing) { this->oregon_.set_timing(timing); }
   void set_oregon_verify_bit_pairs(bool verify) { this->oregon_.set_verify_bit_pairs(verify); }
@@ -78,7 +80,9 @@ class RfSniffer : public PollingComponent, public remote_base::RemoteReceiverLis
  protected:
   uint64_t now_ms_();
   bool decode_builtin_(const remote_base::RemoteReceiveData &data, Decoder &decoder, Decoded &out);
-  void log_raw_(const std::vector<int32_t> &raw, uint64_t start_ms, bool has_rssi, int16_t rssi_dbm);
+  void log_raw_(const std::vector<int32_t> &raw, uint64_t start_ms, const std::string &signal);
+  /// Noise floor of the current interval, or the last one while the current has no samples yet.
+  bool noise_floor_(float &dbm);
   void log_line_(const Line &line);
   std::string timestamp_(uint64_t uptime_ms);
   bool clock_valid_();
@@ -94,6 +98,9 @@ class RfSniffer : public PollingComponent, public remote_base::RemoteReceiverLis
   RawMode raw_mode_{RawMode::OFF};
   uint32_t min_pulses_{60};
   uint32_t max_repeat_wait_ms_{500};
+  uint32_t receive_symbols_{0};
+  bool has_last_floor_{false};
+  float last_floor_dbm_{0};
 
   // 64 bit uptime from the 32 bit millis().
   uint32_t last_millis_{0};
