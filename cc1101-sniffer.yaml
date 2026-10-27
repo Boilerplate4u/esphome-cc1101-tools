@@ -23,8 +23,8 @@
 #                      Oregon messages are logged and not offered to other decoders;
 #                      Drayton and rc_switch need two copies and run only when shown;
 #                      repeat wait counts from the end of a copy; raw log starts Off
-#   1.0.0  2026-10-26  First release, based on cc1101-dumper 1.1.1 and the
-#                      rf_sniffer component
+#   1.0.0  2026-10-26  First release of the rf_sniffer component and this
+#                      configuration
 #
 # Wiring CC1101 -> WT32-ETH01 (pins are set in substitutions)
 #   VCC   -> 3V3
@@ -72,7 +72,7 @@ esphome:
 
 external_components:
   # rf_sniffer from this repository
-  - source: github://Boilerplate4u/esphome-cc1101-tools@main
+  - source: github://Boilerplate4u/esphome-cc1101-tools@v1.2.0
     components: [rf_sniffer]
 
 esp32:
@@ -249,7 +249,7 @@ number:
       sorting_group_id: grp_radio
       sorting_weight: 80
     icon: mdi:filter-variant
-    unit_of_measurement: us
+    unit_of_measurement: "µs"
     optimistic: true
     restore_value: true
     initial_value: 100
@@ -305,7 +305,7 @@ number:
       - lambda: id(sniffer).set_max_repeat_wait((uint32_t) x);
 
   # Oregon v2.1 decoder timing, applied together by apply_oregon
-  # Defaults match the decoder, except Min preamble (20 instead of 24, see README)
+  # Defaults match the decoder, except Min preamble: 20 instead of 24 (see Min preamble in docs/reference-guide.md)
   - platform: template
     id: ore_min_pulse
     internal: true
@@ -314,7 +314,7 @@ number:
       sorting_weight: 20
     name: "Min pulse"
     icon: mdi:arrow-collapse-left
-    unit_of_measurement: us
+    unit_of_measurement: "µs"
     optimistic: true
     restore_value: true
     initial_value: 200
@@ -334,7 +334,7 @@ number:
       sorting_weight: 30
     name: "Long pulse from"
     icon: mdi:arrow-split-vertical
-    unit_of_measurement: us
+    unit_of_measurement: "µs"
     optimistic: true
     restore_value: true
     initial_value: 700
@@ -354,7 +354,7 @@ number:
       sorting_weight: 40
     name: "Max pulse"
     icon: mdi:arrow-collapse-right
-    unit_of_measurement: us
+    unit_of_measurement: "µs"
     optimistic: true
     restore_value: true
     initial_value: 1200
@@ -374,7 +374,7 @@ number:
       sorting_weight: 50
     name: "End gap"
     icon: mdi:timer-sand
-    unit_of_measurement: us
+    unit_of_measurement: "µs"
     optimistic: true
     restore_value: true
     initial_value: 2500

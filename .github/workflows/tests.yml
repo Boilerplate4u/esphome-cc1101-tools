@@ -79,7 +79,3 @@ jobs:
         run: esphome config ci/sniffer.yaml
       - name: Compile
         run: esphome compile ci/sniffer.yaml
-      - name: Validate cc1101-dumper.yaml (no external components)
-        run: |
-          cp cc1101-dumper.yaml ci/dumper.yaml
-          esphome config ci/dumper.yaml

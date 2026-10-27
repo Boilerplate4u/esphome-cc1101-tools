@@ -1,8 +1,8 @@
 # Reference Guide
 
-This guide explains every value in the README: what it is for, when and how to change it, and how to check the result. Start with Basics, look up a problem under Quick help, or jump to a value from the README.
+This guide explains every value in the README: what it's for, when and how to change it, and how to check the result. New to this? Start with Basics. Got a problem? Look it up under Quick help. Or just jump to a value from the README.
 
-Web UI values are changed at `http://<device name>.local/`, take effect at once and are kept after a restart. Compile-time values are changed in `cc1101-sniffer.yaml` and need a new install from ESPHome Device Builder. In the tables, the default value is shown in parentheses.
+You change web UI values at `http://<device name>.local/`; they take effect right away and are kept after a restart. Compile-time values live in your ESPHome configuration file and need a new install from ESPHome Device Builder. In the tables, the default value is shown in parentheses.
 
 ## Basics
 
@@ -24,34 +24,36 @@ Most remote controls, door sensors and weather sensors on 433 MHz send data by s
 
 ### Where to find the log
 
-Everything the tools find is written to the log. It is shown in the web UI and under Logs for the device in ESPHome Device Builder. The boot log is the part written right after the device starts; it shows whether the CC1101 was found.
+Everything the tools find ends up in the log. You'll see it in the Debug Log at the bottom of the web UI and under Logs for the device in ESPHome Device Builder. The boot log is the part written right after the device starts; it tells you whether the CC1101 was found.
 
-An example line from an Oregon sensor, after the prefix ESPHome adds:
+![The Debug Log at the bottom of the web UI](images/debug-log.png)
+
+A line from an Oregon sensor, after the prefix ESPHome adds:
 
 ```
-14:05:12.345 - oregon THGR122N/THGR228N type=1D20 channel=2 unit_id=7B temp=21.5 hum=45 battery=ok short_us=488 long_us=975 pair_errors=0 signal_grade=4 (snr_db=20, rssi_dbm=-63) rep=2 span_ms=241 max_gap_ms=241
+21:28:09.442 - oregon THGR122N/THGR228N type=1D20 channel=1 unit_id=7B temp=10.6 hum=89 battery=ok short_us=485 long_us=976 pair_errors=0 signal_grade=4 (snr_db=20, rssi_dbm=-72) rep=2 span_ms=240 max_gap_ms=240
 ```
 
-It shows the time the transmission began, the decoder (`oregon`), the decoded values, the signal and how many copies arrived. A capture no decoder recognises gives a line like `14:05:20.101 - unknown pulses=130 duration_ms=76 truncated=no` followed by the signal. The fields are explained under [Log fields](#log-fields) and [Signal](#radio-signal-levels).
+It shows when the transmission began, the decoder (`oregon`), the decoded values, the signal and how many copies arrived. A capture no decoder recognises gives a line like `21:28:41.291 - unknown pulses=69 duration_ms=55 truncated=no` followed by the signal. The fields are explained under [Log fields](#log-fields) and [Signal](#radio-signal-levels).
 
 ### Tuning in five steps
 
 1. Install with the default values and let the device run for a few minutes.
-2. Trigger your device and find its line in the log. No line at all: see Quick help.
-3. Check `signal_grade`. 3 or higher is fine; lower means the receiver needs a better place or other settings.
+2. Trigger your device and find its line in the log. Nothing shows up? See Quick help.
+3. Check `signal_grade`. 3 or higher is fine; anything lower means the receiver needs a better spot or other settings.
 4. Change one value at a time, press Reset statistics and compare Decoded frames, Unknown frames and `signal_grade` after a few minutes.
 5. Copy the working values to your own ESPHome configuration.
 
-To start over, set Radio profile to Standard and set the other values back to the defaults shown in parentheses. Radio profile only covers five radio values, not the Decoders, Oregon v2.1 decoder and Raw log values.
+Want to start over? Set Radio profile to Standard and put the other values back to the defaults shown in parentheses. Radio profile only covers five radio values, not the Decoders, Oregon v2.1 decoder and Raw log values.
 
 ## Quick help
 
-The values named here are explained in the sections further down.
+The values mentioned here are explained further down.
 
 | Symptom | Try first | Then |
 | --- | --- | --- |
-| Frames stays at 0 | Check the boot log for the CC1101 and its chip ID ([compile-time values](#values-that-can-only-be-set-at-compile-time)) | Check the wiring and the pins against the header of your board configuration ([WT32-ETH01](cc1101-sniffer-wt32-eth01.yaml) or [ESP32 with Wi-Fi](cc1101-sniffer-esp32-wifi.yaml)) |
-| No line at all when the device sends | Set Raw log to All and check that captures arrive ([Raw log](#raw-log)) | Radio profile Sensitive, check `frequency` ([CC1101 Radio and receiver](#cc1101-radio-and-receiver-settings), [compile-time values](#values-that-can-only-be-set-at-compile-time)) |
+| Frames stays at 0 | Check the boot log for the CC1101 and its chip ID ([compile-time values](#values-that-can-only-be-set-at-compile-time)) | Check the wiring and the pins against the hardware guide for your board ([WT32-ETH01](hardware-wt32-eth01.md) or [ESP32 with Wi-Fi](hardware-esp32-wifi.md)) |
+| Nothing shows up when the device sends | Set Raw log to All and check that captures arrive ([Raw log](#raw-log)) | Radio profile Sensitive, check `frequency` ([CC1101 Radio and receiver](#cc1101-radio-and-receiver-settings), [compile-time values](#values-that-can-only-be-set-at-compile-time)) |
 | The device shows up as `unknown` | RX tolerance higher ([CC1101 Radio and receiver](#cc1101-radio-and-receiver-settings)) | Check that a decoder exists for it ([Decoders](#decoders)); study it with Raw log Unknown only |
 | Many false or broken captures | Radio profile Noise hunting ([CC1101 Radio and receiver](#cc1101-radio-and-receiver-settings)) | Max DVGA gain lower, OOK decision boundary higher |
 | `signal_grade` 1 or 2 | Move the receiver or the antenna | Radio profile Sensitive |
@@ -62,14 +64,14 @@ The values named here are explained in the sections further down.
 
 ## CC1101 Radio and receiver settings
 
-These values decide what the CC1101 hears. They are in the Radio and receiver group of the web UI. The receiver has two amplifier stages, the LNA (low-noise amplifier) and the DVGA (digital variable gain amplifier), and an AGC (automatic gain control) that sets their gain for each signal. More gain hears weaker devices but also more noise, so tuning is a balance. The most useful values come first; the last four rarely need changing.
+These values decide what the CC1101 hears. They are in the Radio and receiver group of the web UI. The receiver has two amplifier stages, the LNA (low-noise amplifier) and the DVGA (digital variable gain amplifier), and an AGC (automatic gain control) that sets their gain for each signal. More gain hears weaker devices but also more noise, so tuning is a balancing act. The most useful values come first; you'll rarely need to touch the last four.
 
 | Value | Range, steps or options (default) | What it does |
 | --- | --- | --- |
-| Radio profile | Standard, Sensitive, Noise hunting, Custom (Standard) | Sets Max DVGA gain, OOK decision boundary, RX filter bandwidth, RX filter and RX tolerance in one step |
+| Radio profile | Standard, Sensitive, Noise hunting, Custom (Standard) | Sets Max DVGA gain, OOK decision boundary, RX filter bandwidth kHz, RX filter and RX tolerance in one step |
 | Max DVGA gain | Default, -1, -2, -3 (-3) | Limits the gain of the second amplifier stage; -3 removes the three highest gain steps, Default allows full gain |
 | OOK decision boundary | 4, 8, 12, 16 dB (8 dB) | How much stronger than the background a signal must be to count as on |
-| RX (receive) filter bandwidth | 58 to 812 kHz (kilohertz) in 16 steps (203 kHz) | How wide a frequency band the receiver listens to |
+| RX (receive) filter bandwidth kHz | 58 to 812 kHz (kilohertz) in 16 steps (203 kHz) | How wide a frequency band the receiver listens to |
 | RX filter | 50 to 180 µs, steps of 10 (100 µs) | Pulses shorter than this are treated as noise spikes and merged into the pulse around them |
 | RX tolerance | 15 to 50 %, steps of 1 (35 %) | How much a device's pulse timing may differ from the standard and still be decoded |
 | RX attenuation | 0, 6, 12, 18 dB (0 dB) | Weakens the incoming signal for all devices |
@@ -81,7 +83,7 @@ These values decide what the CC1101 hears. They are in the Radio and receiver gr
 
 #### Radio profile
 
-Start with Standard. Try Sensitive when devices are missed and Noise hunting when the log fills with false or broken captures. Changing one of the five values yourself switches the profile to Custom. Check: press Reset statistics, wait a few minutes and compare Decoded frames and Unknown frames with the previous profile.
+Start with Standard. Try Sensitive when devices are missed and Noise hunting when the log fills with false or broken captures. Changing one of the five values yourself switches the profile to Custom, or to the profile that matches the new values. Check: press Reset statistics, wait a few minutes and compare Decoded frames and Unknown frames with the previous profile.
 
 #### Max DVGA gain
 
@@ -91,7 +93,7 @@ Move it towards -3 when Noise frames per minute is high, and towards Default whe
 
 A lower value hears weaker devices but turns more noise into pulses; a higher value gives cleaner captures from strong devices. Raise it when captures are broken by noise, lower it for weak devices. Check: compare Unknown frames and Noise frames per minute before and after.
 
-#### RX filter bandwidth
+#### RX filter bandwidth kHz
 
 Narrower lets in less noise, but a device whose frequency is slightly off is no longer heard, and cheap 433 MHz devices often are. Narrow it one step at a time while your device still decodes, and go back one step when it disappears. Check: the device keeps decoding and `snr_db` rises.
 
@@ -117,7 +119,7 @@ A lower target gives less gain overall, which can help in a place with strong in
 
 #### AGC hysteresis
 
-Higher keeps the gain steadier during a message; lower follows changing signals faster but also follows noise. Rarely needs changing. Check: compare broken captures for a device whose level varies.
+Higher keeps the gain steadier during a message; lower follows changing signals faster but also follows noise. You'll rarely need to change it. Check: compare broken captures for a device whose level varies.
 
 ## Decoders
 
@@ -136,11 +138,11 @@ A higher value merges copies with long pauses but delays the line; a lower value
 
 #### Decoder switches
 
-A hidden decoder still recognises its captures, so they are not counted or dumped as unknown. Drayton and rc\_switch are the exception: without a checksum they can mistake other signals for their own, so they run only when shown and need two identical copies. Check: the hidden decoder's lines are gone and Unknown frames does not rise.
+A hidden decoder still recognises its captures: they count under Decoded frames and are not dumped or counted as unknown. Drayton and rc\_switch are the exception: without a checksum they can mistake other signals for their own, so they run only when shown and need two identical copies. Check: the hidden decoder's lines are gone and Unknown frames does not rise.
 
 ### Which decoder fits your device
 
-If you do not know which decoder fits, leave all of them on and trigger the device: the line starts with the name of the decoder that recognised it. The decoders and what ESPHome's documentation says they decode:
+Not sure which decoder fits? Leave them all on and trigger the device: the line starts with the name of the decoder that recognised it. The decoders and what ESPHome's documentation says they decode:
 
 | Decoder | Decodes | Note |
 | --- | --- | --- |
@@ -158,7 +160,7 @@ If you do not know which decoder fits, leave all of them on and trigger the devi
 
 ## Oregon v2.1 decoder
 
-Oregon v2.1 sensors use a coding that ESPHome does not decode, so these tools have their own decoder with adjustable timing. These values are in the Oregon v2.1 decoder group of the web UI. A good message has short pulses near 488 µs and long pulses near 976 µs; `short_us` and `long_us` in each line show what your sensor sends. The four time values must satisfy Min pulse < Long pulse from < Max pulse < End gap, otherwise a change is ignored and a warning is logged.
+Oregon v2.1 sensors use a coding that ESPHome doesn't decode, so these tools have their own decoder with adjustable timing. These values are in the Oregon v2.1 decoder group of the web UI. A good message has short pulses near 488 µs and long pulses near 976 µs; `short_us` and `long_us` in each line show what your sensor sends. The four time values must satisfy Min pulse < Long pulse from < Max pulse < End gap, otherwise a change is ignored and a warning is logged.
 
 | Value | Range, steps or options (default) | What it does |
 | --- | --- | --- |
@@ -208,7 +210,7 @@ The raw log shows a capture exactly as received: every pulse width in µs, posit
 
 #### Raw log
 
-Unknown only is the right choice for a new device. All produces a lot of output and can slow the device, so use it only for short tests. For that reason it is always Off after a restart. Check: `rf_raw` lines appear when the device sends.
+Unknown only is the right choice for a new device. All produces a lot of output and can slow the device down, so only use it for short tests. That's also why it's always Off after a restart. Check: `rf_raw` lines appear when the device sends.
 
 #### Min pulses per frame
 
@@ -216,7 +218,7 @@ Lower it to see devices with very short messages; raise it when the log fills wi
 
 ### Build your own decoder using the raw log
 
-If none of the built-in decoders recognises your device, the raw log is the starting point for a decoder of your own, the way the Oregon v2.1 decoder in these tools was made.
+If none of the built-in decoders recognises your device, the raw log is where you start building your own, which is exactly how the Oregon v2.1 decoder in these tools was made.
 
 1. Set Raw log to Unknown only and let it run for a few minutes while the device sends.
 2. Note what the device sent each time: the button you pressed, or the values on its display, with the time.
@@ -225,11 +227,11 @@ If none of the built-in decoders recognises your device, the raw log is the star
 5. Test the decoder it suggests against new captures before you rely on it.
 6. To use the decoder in your own ESPHome configuration, add it as an [external component](https://esphome.io/components/external_components/).
 
-A raw log of a remote for a gate, garage door or alarm can be enough to copy that remote. Do not share such logs publicly.
+A raw log of a remote for a gate, garage door or alarm can be enough to copy that remote. Don't share such logs publicly.
 
 ## Statistics
 
-The statistics show how reception works over time and are updated every 60 s. They are in the Statistics group of the web UI. They cannot be changed; use them to compare settings. Press Reset statistics, change one value and compare after a few minutes.
+The statistics show how reception works over time and update every 60 s. They're in the Statistics group of the web UI. You can't change them; use them to compare settings. Press Reset statistics, change one value and compare after a few minutes.
 
 | Value | Type | Description |
 | --- | --- | --- |
@@ -245,7 +247,7 @@ The statistics show how reception works over time and are updated every 60 s. Th
 
 ## Log fields
 
-Each log line starts with the time the transmission began, then the decoder name and the decoded values. The fields below follow the values. You read them; they cannot be changed.
+Each log line starts with the time the transmission began, then the decoder name and the decoded values. The fields below follow the values. They're read-only.
 
 | Field | Unit or values | Description |
 | --- | --- | --- |
@@ -256,6 +258,9 @@ Each log line starts with the time the transmission began, then the decoder name
 | `pair_errors` | Count | Oregon v2.1 only: bit pairs that did not match. Above 0 means a damaged message. |
 | `reason` | `bad_checksum`, `pair_errors`, `bad_sync`, `bad_value`, `too_short`, `no_checksum` | Why an Oregon message was rejected: damaged data, damaged bits, wrong start, invalid values, cut short, or an unknown sensor type without a checksum the decoder can find. |
 | `nibbles` | Hexadecimal | The content of a rejected message in hexadecimal, digits 0 to 9 and A to F; each digit, a nibble, is 4 bits. Identical rejected lines in a row point to a sensor the decoder does not know. |
+| `checksum_nibbles` | Count | In an `oregon unknown` line: the last nibble the found checksum covers. An `oregon unknown` line is an Oregon sensor of a type the decoder does not know, whose checksum it can still find; it also shows `type`, `channel`, `unit_id`, `flags` and `nibbles`. |
+| `checksum_positions` | Count | In an `oregon unknown` line: shown when the checksum fits at more than one place; the decoder uses the last one, so the message length is uncertain. |
+| `guessed_temp`, `guessed_hum` | °C, % | In an `oregon unknown` line: the temperature and humidity read as in the THGR122N layout, shown only when the values are plausible. They are guesses and can be wrong. |
 | `pulses` | Count | Number of pulses in an `unknown` or raw capture. |
 | `duration_ms` | ms | Length of the capture. |
 | `gap_ms` | ms | Time since the previous capture started; repeated values show how often a device sends. |
@@ -263,7 +268,7 @@ Each log line starts with the time the transmission began, then the decoder name
 
 ## Radio signal levels
 
-Three fields describe how well a transmission was received. They are the same signal expressed three ways, from raw measurement to a simple grade. Right after start only `rssi_dbm` is shown, until the first noise floor is measured.
+Three fields tell you how well a transmission was received. They're the same signal expressed three ways, from raw measurement to a simple grade. Right after start you'll only see `rssi_dbm`, until the first noise floor is measured.
 
 | Field | Unit or values | Description |
 | --- | --- | --- |
@@ -273,15 +278,15 @@ Three fields describe how well a transmission was received. They are the same si
 
 ## Values that can only be set at compile time
 
-These values are built into the firmware, so they cannot be changed while the device runs. They are set in the ESPHome configuration file, and the column **Set in** shows which block each value belongs to. Values under `substitutions` are named values defined once at the top of the file and used by the rest of it. After a change, install the firmware again and check the boot log. Most of them only need changing when your hardware or setup differs from the examples.
+These values are built into the firmware, so they can't be changed while the device runs. They are set in the ESPHome configuration file, and the column **Set in** shows which block each value belongs to. Values under `substitutions` are named values defined once at the top of the file and used by the rest of it. After a change, install the firmware again and check the boot log. Most of them only need changing when your hardware or setup differs from the examples.
 
 | Value | Set in | Range or options (default) | What it does |
 | --- | --- | --- | --- |
 | `name`, `friendly_name` | `substitutions` | Text (cc1101-sniffer, CC1101 Sniffer) | The name of the device in ESPHome Device Builder, on the network (`<name>.local`) and in the web UI |
 | `board` | `substitutions` | ESP32 board name (wt32-eth01) | Tells ESPHome which ESP32 board you use, for example `wt32-eth01` or `esp32dev` |
 | `frequency` | `substitutions` | CC1101 bands, for example 433.92 or 868.3 MHz (433.92 MHz) | The radio frequency the receiver listens on |
-| `spi_clk_pin`, `spi_mosi_pin`, `spi_miso_pin`, `cc1101_cs_pin` | `substitutions` | GPIO (general purpose input/output) pins (see the wiring in [WT32-ETH01](cc1101-sniffer-wt32-eth01.yaml) or [ESP32 with Wi-Fi](cc1101-sniffer-esp32-wifi.yaml)) | The pins for the SPI (serial peripheral interface) bus that the ESP32 uses to configure the CC1101 |
-| `rx_pin` | `substitutions` | GPIO pin (GPIO36 in [WT32-ETH01](cc1101-sniffer-wt32-eth01.yaml) and [ESP32 with Wi-Fi](cc1101-sniffer-esp32-wifi.yaml)) | The pin connected to the CC1101 data output (GDO2, general digital output 2), where the received pulses arrive |
+| `spi_clk_pin`, `spi_mosi_pin`, `spi_miso_pin`, `cc1101_cs_pin` | `substitutions` | GPIO (general purpose input/output) pins (see the hardware guide: [WT32-ETH01](hardware-wt32-eth01.md) or [ESP32 with Wi-Fi](hardware-esp32-wifi.md)) | The pins for the SPI (serial peripheral interface) bus that the ESP32 uses to configure the CC1101 |
+| `rx_pin` | `substitutions` | GPIO pin (GPIO36 in the [WT32-ETH01](hardware-wt32-eth01.md) and [ESP32 with Wi-Fi](hardware-esp32-wifi.md) hardware guides) | The pin connected to the CC1101 data output (GDO2, general digital output 2), where the received pulses arrive |
 | `activity_pin` | `rf_sniffer` | Same pin as `rx_pin` | Lets the firmware see when a capture is being received, so RSSI is read only then |
 | `rx_symbols` | `substitutions` | 64 to 512, even numbers (448) | The size of the receive buffer; 448 symbols hold about 896 pulses |
 | `idle` | `remote_receiver` | Time (5 ms) | How long the signal must be silent before a capture ends |
@@ -323,7 +328,7 @@ The ESP32 has 512 symbols in total for receiving and sending, so a larger value 
 
 #### `idle`
 
-Longer joins copies that follow closely into one capture; shorter splits messages that contain long pauses. Rarely needs changing. Check: one capture per copy in the raw log.
+Longer joins copies that follow closely into one capture; shorter splits messages that contain long pauses. You'll rarely need to change it. Check: one capture per copy in the raw log.
 
 #### `filter_symbols`
 
