@@ -1,6 +1,6 @@
 # esphome-cc1101-tools
 
-ESPHome CC1101 tools for tuning the receiver and decoder settings, dumping raw signals and printing decoded protocol data.
+ESPHome CC1101 tools for tuning the receiver and decoder settings, dumping raw signals and printing decoded protocol data. It helps you find the settings and decoder that work for your devices, so you can use them in your own ESPHome configuration.
 
 ## Summary
 
