@@ -12,7 +12,7 @@ Once you've optimized the receiver settings, identified the appropriate decoder,
 
 Everything is built and installed using the standard ESPHome Device Builder in Home Assistant. Note that no entities are created and nothing is exposed to Home Assistant. This is purely a live diagnostic and tuning tool. If you want to save data for later analysis, simply capture the log output to a file.
 
-Ready-to-use configurations are in `docs/`: [WT32-ETH01](docs/cc1101-sniffer-wt32-eth01.yaml) and [ESP32 with Wi-Fi](docs/cc1101-sniffer-esp32-wifi.yaml).
+Ready-to-use configurations examples are in `docs/`: [WT32-ETH01](docs/cc1101-sniffer-wt32-eth01.yaml) and [ESP32 with Wi-Fi](docs/cc1101-sniffer-esp32-wifi.yaml).
 
 ## Defaults and radio profiles
 
