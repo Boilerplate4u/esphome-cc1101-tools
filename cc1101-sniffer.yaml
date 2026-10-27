@@ -71,8 +71,8 @@ esphome:
       - script.execute: sync_profile
 
 external_components:
-  # rf_sniffer from this repository (branch rf-sniffer until it is merged)
-  - source: github://boilerplate4u/esphome-cc1101-tools@rf-sniffer
+  # rf_sniffer from this repository
+  - source: github://Boilerplate4u/esphome-cc1101-tools@main
     components: [rf_sniffer]
 
 esp32:

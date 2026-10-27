@@ -71,7 +71,7 @@ jobs:
         run: |
           mkdir -p ci
           # Build the checked out component instead of the published one.
-          sed "s#  - source: github://boilerplate4u/esphome-cc1101-tools@.*#  - source:\n      type: local\n      path: ../components#" \
+          sed "s#  - source: github://[Bb]oilerplate4u/esphome-cc1101-tools@.*#  - source:\n      type: local\n      path: ../components#" \
             "hardware-config-examples/${{ matrix.config }}.yaml" > ci/sniffer.yaml
           grep -q "type: local" ci/sniffer.yaml
           printf 'wifi_ssid: "ci"\nwifi_password: "ci-password"\n' > ci/secrets.yaml
