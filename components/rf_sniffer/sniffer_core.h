@@ -173,5 +173,19 @@ std::vector<std::string> format_raw_lines(const std::vector<int32_t> &raw, size_
 /// Sum of all pulse widths in microseconds.
 uint64_t capture_duration_us(const std::vector<int32_t> &raw);
 
+/// Timing of a capture that remote_receiver delivered at `received_ms`.
+struct FrameTiming {
+  uint64_t start_ms{0};      // estimated start of the first pulse
+  uint64_t duration_ms{0};   // the pulses only, without the idle time remote_receiver appends
+  uint64_t rssi_from_ms{0};  // start of the RSSI window, RSSI_WINDOW_MARGIN_MS before start_ms
+};
+/// The loop may handle a capture a little after it ended, which moves the estimated
+/// start later than the real one; the RSSI window opens this much earlier to keep
+/// the reads made early in the frame. Shorter than the 50 ms between Oregon copies.
+static constexpr uint64_t RSSI_WINDOW_MARGIN_MS = 20;
+/// The last value of a capture is the idle time remote_receiver appends; it counts
+/// for the start estimate (the capture ended after it) but not for the duration.
+FrameTiming frame_timing(const std::vector<int32_t> &raw, uint64_t received_ms);
+
 }  // namespace rf_sniffer
 }  // namespace esphome

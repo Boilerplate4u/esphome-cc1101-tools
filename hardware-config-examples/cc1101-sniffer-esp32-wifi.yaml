@@ -17,7 +17,7 @@
 #                      signal_grade 1..5 from the margin over the noise floor;
 #                      a line for every unknown frame, truncated=yes when a capture
 #                      filled the buffer; Radio profile select (Standard, Sensitive,
-#                      Noise hunting, Custom)
+#                      Noise hunting, Custom) that follows the restored settings at boot
 #   1.1.0  2026-10-26  RSSI read only a few times per frame while the data pin is high
 #                      (reading it every millisecond disturbed reception); rejected
 #                      Oregon messages are logged and not offered to other decoders;
@@ -67,6 +67,8 @@ esphome:
       - script.execute: apply_sniffer
       # From here on a change of a profile setting updates the Radio profile select
       - lambda: id(boot_done) = true;
+      # Show the profile that matches the restored settings, or Custom
+      - script.execute: sync_profile
 
 external_components:
   # rf_sniffer from this repository (branch rf-sniffer until it is merged)
@@ -81,6 +83,9 @@ esp32:
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
+  # GPIO36 interrupts (rf_sniffer activity_pin) can trigger falsely with Wi-Fi
+  # sleep enabled (ESP-IDF GPIO documentation), so keep the radio awake
+  power_save_mode: none
 
 logger:
   level: DEBUG

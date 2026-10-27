@@ -267,6 +267,8 @@ static void test_rssi() {
   CHECK(!rssi.noise_floor(floor_dbm));
 }
 
+static const std::vector<Capture> &caps_for_timing();
+
 static void test_signal_and_lines() {
   CHECK(signal_grade(30) == 5 && signal_grade(25) == 5 && signal_grade(24.9f) == 4 && signal_grade(18) == 4);
   CHECK(signal_grade(17) == 3 && signal_grade(12) == 3 && signal_grade(11) == 2 && signal_grade(6) == 2);
@@ -299,6 +301,27 @@ static void test_signal_and_lines() {
         "unknown pulses=897 duration_ms=910 truncated=yes signal_grade=1 (snr_db=3, rssi_dbm=-80)");
   CHECK(format_unknown(130, 76, false, "") == "unknown pulses=130 duration_ms=76 truncated=no");
 
+  // Frame timing: the appended idle counts for the start, not for the duration.
+  {
+    const FrameTiming t = frame_timing({1000, -2000, 3000, -5000}, 100000);
+    CHECK(t.start_ms == 100000 - 11 && t.duration_ms == 6 && t.rssi_from_ms == 100000 - 11 - RSSI_WINDOW_MARGIN_MS);
+    const auto *unknown = find(caps_for_timing(), "unknown device 747");
+    CHECK(unknown != nullptr && frame_timing(unknown->raw, 10000).duration_ms == 749);  // 754.9 ms with idle
+    const FrameTiming early = frame_timing({100, -5000}, 3);
+    CHECK(early.start_ms == 0 && early.rssi_from_ms == 0);
+  }
+  // A read 10 ms into a frame stays in the window when the loop handled the
+  // capture 15 ms late (the start estimate is then 15 ms too late).
+  {
+    RssiTracker rssi;
+    rssi.add(50010, static_cast<uint8_t>(int8_t(20)));  // frame starts at 50000, read at 50010
+    const std::vector<int32_t> raw = {900, -1000, 900, -1000, 5000};
+    const FrameTiming t = frame_timing(raw, 50000 + 8 + 15);  // 8 ms of capture, handled 15 ms late
+    int16_t peak = 0;
+    CHECK(t.start_ms == 50015 && !rssi.peak(t.start_ms, 50023, peak));
+    CHECK(rssi.peak(t.rssi_from_ms, 50023, peak) && peak == -64);
+  }
+
   // Oregon quality fields carry their units.
   OregonSniffer oregon;
   std::vector<Decoded> out;
@@ -320,8 +343,12 @@ static void test_format() {
   CHECK(std::string(decoder_name(Decoder::RC_SWITCH)) == "rc_switch");
 }
 
+static std::vector<Capture> g_caps;
+static const std::vector<Capture> &caps_for_timing() { return g_caps; }
+
 int main(int argc, char **argv) {
-  const auto caps = load(argc > 1 ? argv[1] : "data/cc1101_frames.txt");
+  g_caps = load(argc > 1 ? argv[1] : "data/cc1101_frames.txt");
+  const auto &caps = g_caps;
   CHECK(caps.size() == 10);
   test_oregon_real_captures(caps);
   test_oregon_unknown_type();

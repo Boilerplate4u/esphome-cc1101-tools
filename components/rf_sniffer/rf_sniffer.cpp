@@ -205,7 +205,11 @@ void RfSniffer::sample_rssi_() {
 #ifdef USE_RF_SNIFFER_RSSI
   if (this->radio_ == nullptr)
     return;
+  // Read the edge time before micros(): an edge in between must not look like
+  // one from the future (as unsigned difference it would mean "long quiet").
+  const uint32_t last_edge = this->last_edge_us_;
   const uint32_t now = micros();
+  const int32_t since_edge = static_cast<int32_t>(now - last_edge);
   uint8_t raw = 0;
   if (this->activity_pin_ != nullptr) {
     if (this->frame_started_) {
@@ -214,7 +218,7 @@ void RfSniffer::sample_rssi_() {
       this->last_rssi_us_ = now;  // first read after FRAME_READ_INTERVAL_US, when the AGC has settled
       this->high_freq_.start();
     }
-    const bool in_frame = now - this->last_edge_us_ <= FRAME_QUIET_US;
+    const bool in_frame = since_edge <= static_cast<int32_t>(FRAME_QUIET_US);
     if (in_frame) {
       if (this->frame_reads_ < FRAME_MAX_READS && now - this->last_rssi_us_ >= FRAME_READ_INTERVAL_US &&
           this->activity_isr_pin_.digital_read() && this->read_rssi_raw_(raw)) {
@@ -225,7 +229,7 @@ void RfSniffer::sample_rssi_() {
       return;
     }
     this->high_freq_.stop();
-    if (now - this->last_edge_us_ < FLOOR_QUIET_US)
+    if (since_edge < static_cast<int32_t>(FLOOR_QUIET_US))
       return;
   } else if (this->now_ms_() - this->last_frame_end_ms_ < FLOOR_QUIET_US / 1000) {
     // Without the data pin only the noise floor is measured, away from frames.
@@ -365,13 +369,14 @@ bool RfSniffer::decode_builtin_(const remote_base::RemoteReceiveData &data, Deco
 bool RfSniffer::on_receive(remote_base::RemoteReceiveData data) {
   const auto &raw = data.get_raw_data();
   const uint64_t end_ms = this->now_ms_();
-  const uint64_t duration_ms = capture_duration_us(raw) / 1000;
-  const uint64_t start_ms = end_ms > duration_ms ? end_ms - duration_ms : 0;
+  const FrameTiming timing = frame_timing(raw, end_ms);
+  const uint64_t start_ms = timing.start_ms;
+  const uint64_t duration_ms = timing.duration_ms;
   this->frames_++;
   this->last_frame_end_ms_ = end_ms;
 
   int16_t rssi_dbm = 0;
-  const bool has_rssi = this->rssi_.peak(start_ms, end_ms, rssi_dbm);
+  const bool has_rssi = this->rssi_.peak(timing.rssi_from_ms, end_ms, rssi_dbm);
 
   // Oregon first. A message it found but rejected still belongs to Oregon: it is
   // logged as rejected and not offered to the other decoders, which would read
@@ -393,8 +398,11 @@ bool RfSniffer::on_receive(remote_base::RemoteReceiveData data) {
   }
 
   if (accepted) {
-    this->decoded_++;
-    this->per_decoder_[static_cast<size_t>(found.front().decoder)]++;
+    // Decoders without a checksum are counted when their line is confirmed (log_line_).
+    if (!decoder_is_weak(found.front().decoder)) {
+      this->decoded_++;
+      this->per_decoder_[static_cast<size_t>(found.front().decoder)]++;
+    }
   } else if (oregon_rejected) {
     this->oregon_rejected_++;
   } else if (raw.size() >= this->min_pulses_) {
@@ -451,11 +459,16 @@ bool RfSniffer::noise_floor_(float &dbm) {
 }
 
 void RfSniffer::log_line_(const Line &line) {
-  if (decoder_is_weak(line.decoder) && line.repeats < 2) {
-    // No checksum: one copy alone is too often a misread of something else.
-    ESP_LOGV(TAG, "%s - %s %s rep=1 (ignored, needs 2 copies)", this->timestamp_(line.first_ms).c_str(),
-             decoder_name(line.decoder), line.fields.c_str());
-    return;
+  if (decoder_is_weak(line.decoder)) {
+    if (line.repeats < 2) {
+      // No checksum: one copy alone is too often a misread of something else.
+      this->unknown_ += line.repeats;
+      ESP_LOGV(TAG, "%s - %s %s rep=1 (ignored, needs 2 copies)", this->timestamp_(line.first_ms).c_str(),
+               decoder_name(line.decoder), line.fields.c_str());
+      return;
+    }
+    this->decoded_ += line.repeats;
+    this->per_decoder_[static_cast<size_t>(line.decoder)] += line.repeats;
   }
   float floor_dbm = 0;
   const bool has_floor = this->noise_floor_(floor_dbm);

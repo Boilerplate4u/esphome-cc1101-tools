@@ -418,5 +418,19 @@ uint64_t capture_duration_us(const std::vector<int32_t> &raw) {
   return total;
 }
 
+FrameTiming frame_timing(const std::vector<int32_t> &raw, uint64_t received_ms) {
+  FrameTiming t;
+  const uint64_t total_ms = capture_duration_us(raw) / 1000;
+  t.start_ms = received_ms > total_ms ? received_ms - total_ms : 0;
+  uint64_t pulses_us = capture_duration_us(raw);
+  if (!raw.empty()) {
+    const int32_t idle = raw.back();
+    pulses_us -= idle < 0 ? uint64_t(-(int64_t) idle) : uint64_t(idle);
+  }
+  t.duration_ms = pulses_us / 1000;
+  t.rssi_from_ms = t.start_ms > RSSI_WINDOW_MARGIN_MS ? t.start_ms - RSSI_WINDOW_MARGIN_MS : 0;
+  return t;
+}
+
 }  // namespace rf_sniffer
 }  // namespace esphome
